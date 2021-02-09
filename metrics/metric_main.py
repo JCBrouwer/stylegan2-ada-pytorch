@@ -165,7 +165,7 @@ def kid5k(opts):
 @register_metric
 def kid(opts):
     opts.dataset_kwargs.update(max_size=None)
-    kid = kernel_inception_distance.compute_kid(opts, max_real=2500, num_gen=2500, num_subsets=69, max_subset_size=420)
+    kid = kernel_inception_distance.compute_kid(opts, max_real=5000, num_gen=5000, num_subsets=75, max_subset_size=750)
     return dict(kid=kid)
 
 

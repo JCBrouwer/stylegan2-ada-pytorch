@@ -286,6 +286,7 @@ def training_loop(
         print()
     cur_nimg = 0
     cur_tick = 0
+    last_nbatch = 0
     tick_start_nimg = cur_nimg
     tick_start_time = time.time()
     maintenance_time = tick_start_time - start_time
@@ -361,7 +362,7 @@ def training_loop(
             )
             augment_pipe.p.copy_((augment_pipe.p + adjust).max(misc.constant(0, device=device)))
             if rank == 0:
-                wandb.log({"Augment": float(augment_pipe.p.cpu())})
+                wandb.log({"Augment": float(augment_pipe.p.cpu())}, step=int(cur_nimg / batch_size))
 
         # Perform maintenance tasks once per tick.
         done = cur_nimg >= total_kimg * 1000
@@ -409,7 +410,10 @@ def training_loop(
             save_image_grid(
                 images, os.path.join(run_dir, f"fakes{cur_nimg//1000:06d}.jpg"), drange=[-1, 1], grid_size=grid_size
             )
-            wandb.log({"Generated Images EMA": wandb.Image(os.path.join(run_dir, f"fakes{cur_nimg//1000:06d}.jpg"))})
+            wandb.log(
+                {"Generated Images EMA": wandb.Image(os.path.join(run_dir, f"fakes{cur_nimg//1000:06d}.jpg"))},
+                step=int(cur_nimg / batch_size),
+            )
 
         # Save network snapshot.
         snapshot_pkl = None
@@ -450,7 +454,8 @@ def training_loop(
                         "Evaluation/KID": stats_metrics["kid"],
                         "Evaluation/Precision": stats_metrics["precision"],
                         "Evaluation/Recal": stats_metrics["recall"],
-                    }
+                    },
+                    step=int(cur_nimg / batch_size),
                 )
         del snapshot_data  # conserve memory
 
@@ -465,16 +470,19 @@ def training_loop(
         stats_dict = stats_collector.as_dict()
 
         if rank == 0:
+            this_nbatch = cur_nimg / batch_size
             wandb.log(
                 {
-                    "Tick Length": tick_end_time - tick_start_time,
+                    "Tick Length": (tick_end_time - tick_start_time) / (this_nbatch - last_nbatch),
                     "Generator": stats_dict["Loss/G/loss"].mean,
                     "Discriminator": stats_dict["Loss/D/loss"].mean,
                     "Real Score": stats_dict["Loss/scores/real"].mean,
                     "Fake Score": stats_dict["Loss/scores/fake"].mean,
                     "R1 Penalty": stats_dict["Loss/D/reg"].mean,
-                }
+                },
+                step=int(cur_nimg / batch_size),
             )
+            last_nbatch = this_nbatch
 
         # Update logs.
         timestamp = time.time()

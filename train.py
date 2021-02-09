@@ -99,8 +99,8 @@ def setup_training_loop_kwargs(
     assert isinstance(snap, int)
     if snap < 1:
         raise UserError("--snap must be at least 1")
-    args.image_snapshot_ticks = snap
-    args.network_snapshot_ticks = snap
+    args.image_snapshot_ticks = 1
+    args.network_snapshot_ticks = 5
 
     if metrics is None:
         metrics = ["fid50k_full"]
@@ -192,7 +192,7 @@ def setup_training_loop_kwargs(
         "cifar": dict(
             ref_gpus=2, kimg=100000, mb=64, mbstd=32, fmaps=1, lrate=0.0025, gamma=0.01, ema=500, ramp=0.05, map=2
         ),
-        "wav": dict(ref_gpus=2, kimg=40_000, mb=10, mbstd=None, fmaps=1, lrate=0.002, ema=10, ramp=None, map=6),
+        "wav": dict(ref_gpus=2, kimg=1000, mb=8, mbstd=4, fmaps=1, gamma=10, lrate=0.002, ema=10, ramp=None, map=8),
     }
 
     assert cfg in cfg_specs
@@ -210,10 +210,6 @@ def setup_training_loop_kwargs(
         spec.gamma = 0.0002 * (res ** 2) / spec.mb  # heuristic formula
         spec.ema = spec.mb * 10 / 32
 
-    if cfg == "wav":
-        spec.gamma = 0.0002 * (args.training_set_kwargs.resolution ** 2)  # heuristic formula
-        gamma = spec.gamma
-
     args.G_kwargs = dnnlib.EasyDict(
         class_name="training.networks.Generator",
         z_dim=512,
@@ -230,7 +226,7 @@ def setup_training_loop_kwargs(
     args.G_kwargs.synthesis_kwargs.channel_base = args.D_kwargs.channel_base = int(spec.fmaps * 32768)
     args.G_kwargs.synthesis_kwargs.channel_max = args.D_kwargs.channel_max = 512
     args.G_kwargs.mapping_kwargs.num_layers = spec.map
-    args.G_kwargs.synthesis_kwargs.num_fp16_res = args.D_kwargs.num_fp16_res = 4  # enable mixed-precision training
+    args.G_kwargs.synthesis_kwargs.num_fp16_res = args.D_kwargs.num_fp16_res = 3  # enable mixed-precision training
     args.G_kwargs.synthesis_kwargs.conv_clamp = (
         args.D_kwargs.conv_clamp
     ) = 256  # clamp activations to avoid float16 overflow
@@ -241,15 +237,15 @@ def setup_training_loop_kwargs(
     args.loss_kwargs = dnnlib.EasyDict(class_name="training.loss.StyleGAN2Loss", r1_gamma=spec.gamma)
 
     args.total_kimg = spec.kimg
-    args.batch_size = spec.mb
-    args.batch_gpu = spec.mb // spec.ref_gpus
+    args.batch_size = 8
+    args.batch_gpu = 4
     args.ema_kimg = spec.ema
     args.ema_rampup = spec.ramp
 
     if cfg == "cifar" or cfg == "wav":
         args.loss_kwargs.pl_weight = 0  # disable path length regularization
         args.loss_kwargs.style_mixing_prob = 0  # disable style mixing
-        args.D_kwargs.architecture = "orig"  # disable residual skip connections
+        # args.D_kwargs.architecture = "orig"  # disable residual skip connections
 
     if gamma is not None:
         assert isinstance(gamma, float)
