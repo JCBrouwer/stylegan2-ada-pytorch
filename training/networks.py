@@ -42,9 +42,6 @@ def modulated_conv2d(
 ):
     batch_size = x.shape[0]
     out_channels, in_channels, kh, kw = weight.shape
-    misc.assert_shape(weight, [out_channels, in_channels, kh, kw])  # [OIkk]
-    misc.assert_shape(x, [batch_size, in_channels, None, None])  # [NIHW]
-    misc.assert_shape(styles, [batch_size, in_channels])  # [NI]
 
     # Pre-normalize inputs to avoid FP16 overflow.
     if x.dtype == torch.float16 and demodulate:
@@ -81,7 +78,6 @@ def modulated_conv2d(
     # Execute as one fused op using grouped convolution.
     with misc.suppress_tracer_warnings():  # this value will be treated as a constant
         batch_size = int(batch_size)
-    misc.assert_shape(x, [batch_size, in_channels, None, None])
     x = x.reshape(1, -1, *x.shape[2:])
     w = w.reshape(-1, in_channels, kh, kw)
     x = conv2d_resample.conv2d_resample(
@@ -249,10 +245,8 @@ class MappingNetwork(torch.nn.Module):
         x = None
         with torch.autograd.profiler.record_function("input"):
             if self.z_dim > 0:
-                misc.assert_shape(z, [None, self.z_dim])
                 x = normalize_2nd_moment(z.to(torch.float32))
             if self.c_dim > 0:
-                misc.assert_shape(c, [None, self.c_dim])
                 y = normalize_2nd_moment(self.embed(c.to(torch.float32)))
                 x = torch.cat([x, y], dim=1) if x is not None else y
 
@@ -324,7 +318,6 @@ class SynthesisLayer(torch.nn.Module):
     def forward(self, x, w, noise_mode="random", fused_modconv=True, gain=1):
         assert noise_mode in ["random", "const", "none"]
         in_resolution = self.resolution // self.up
-        misc.assert_shape(x, [None, self.weight.shape[1], in_resolution, in_resolution])
         styles = self.affine(w)
 
         noise = None
@@ -457,7 +450,6 @@ class SynthesisBlock(torch.nn.Module):
             )
 
     def forward(self, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
-        misc.assert_shape(ws, [None, self.num_conv + self.num_torgb, self.w_dim])
         w_iter = iter(ws.unbind(dim=1))
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
         memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
@@ -470,7 +462,6 @@ class SynthesisBlock(torch.nn.Module):
             x = self.const.to(dtype=dtype, memory_format=memory_format)
             x = x.unsqueeze(0).repeat([ws.shape[0], 1, 1, 1])
         else:
-            misc.assert_shape(x, [None, self.in_channels, self.resolution // 2, self.resolution // 2])
             x = x.to(dtype=dtype, memory_format=memory_format)
 
         # Main layers.
@@ -487,7 +478,6 @@ class SynthesisBlock(torch.nn.Module):
 
         # ToRGB.
         if img is not None:
-            misc.assert_shape(img, [None, self.img_channels, self.resolution // 2, self.resolution // 2])
             img = upfirdn2d.upsample2d(img, self.resample_filter)
         if self.is_last or self.architecture == "skip":
             y = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
@@ -548,7 +538,6 @@ class SynthesisNetwork(torch.nn.Module):
     def forward(self, ws, **block_kwargs):
         block_ws = []
         with torch.autograd.profiler.record_function("split_ws"):
-            misc.assert_shape(ws, [None, self.num_ws, self.w_dim])
             ws = ws.to(torch.float32)
             w_idx = 0
             for res in self.block_resolutions:
@@ -691,12 +680,10 @@ class DiscriminatorBlock(torch.nn.Module):
 
         # Input.
         if x is not None:
-            misc.assert_shape(x, [None, self.in_channels, self.resolution, self.resolution])
             x = x.to(dtype=dtype, memory_format=memory_format)
 
         # FromRGB.
         if self.in_channels == 0 or self.architecture == "skip":
-            misc.assert_shape(img, [None, self.img_channels, self.resolution, self.resolution])
             img = img.to(dtype=dtype, memory_format=memory_format)
             y = self.fromrgb(img)
             x = x + y if x is not None else y
@@ -785,7 +772,6 @@ class DiscriminatorEpilogue(torch.nn.Module):
         self.out = FullyConnectedLayer(in_channels, 1 if cmap_dim == 0 else cmap_dim)
 
     def forward(self, x, img, cmap, force_fp32=False):
-        misc.assert_shape(x, [None, self.in_channels, self.resolution, self.resolution])  # [NCHW]
         _ = force_fp32  # unused
         dtype = torch.float32
         memory_format = torch.contiguous_format
@@ -793,7 +779,6 @@ class DiscriminatorEpilogue(torch.nn.Module):
         # FromRGB.
         x = x.to(dtype=dtype, memory_format=memory_format)
         if self.architecture == "skip":
-            misc.assert_shape(img, [None, self.img_channels, self.resolution, self.resolution])
             img = img.to(dtype=dtype, memory_format=memory_format)
             x = x + self.fromrgb(img)
 
@@ -806,7 +791,6 @@ class DiscriminatorEpilogue(torch.nn.Module):
 
         # Conditioning.
         if self.cmap_dim > 0:
-            misc.assert_shape(cmap, [None, self.cmap_dim])
             x = (x * cmap).sum(dim=1, keepdim=True) * (1 / np.sqrt(self.cmap_dim))
 
         assert x.dtype == dtype
