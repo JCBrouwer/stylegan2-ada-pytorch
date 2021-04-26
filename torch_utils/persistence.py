@@ -22,11 +22,17 @@ import uuid
 import types
 import dnnlib
 
+
+def remove_shape_asserts(meta):
+    meta.module_src = meta.module_src.replace("misc.assert_shape", "# misc.assert_shape")
+    return meta
+
+
 # ----------------------------------------------------------------------------
 
 _version = 6  # internal version number
 _decorators = set()  # {decorator_class, ...}
-_import_hooks = []  # [hook_function, ...]
+_import_hooks = [remove_shape_asserts]  # [hook_function, ...]
 _module_to_src_dict = dict()  # {module: src, ...}
 _src_to_module_dict = dict()  # {src: module, ...}
 
