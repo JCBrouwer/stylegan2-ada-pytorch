@@ -16,7 +16,6 @@ import tempfile
 
 import click
 import torch
-import wandb
 
 import dnnlib
 from metrics import metric_main
@@ -193,6 +192,9 @@ def setup_training_loop_kwargs(
             ref_gpus=2, kimg=100000, mb=64, mbstd=32, fmaps=1, lrate=0.0025, gamma=0.01, ema=500, ramp=0.05, map=2
         ),
         "wav": dict(ref_gpus=2, kimg=1000, mb=8, mbstd=4, fmaps=1, gamma=10, lrate=0.002, ema=10, ramp=None, map=8),
+        "wav-256": dict(
+            ref_gpus=2, kimg=100000, mb=32, mbstd=16, fmaps=1, gamma=10, lrate=0.002, ema=10, ramp=None, map=8
+        ),
     }
 
     assert cfg in cfg_specs
@@ -237,12 +239,12 @@ def setup_training_loop_kwargs(
     args.loss_kwargs = dnnlib.EasyDict(class_name="training.loss.StyleGAN2Loss", r1_gamma=spec.gamma)
 
     args.total_kimg = spec.kimg
-    args.batch_size = 8
-    args.batch_gpu = 4
+    args.batch_size = 32
+    args.batch_gpu = 16
     args.ema_kimg = spec.ema
     args.ema_rampup = spec.ramp
 
-    if cfg == "cifar" or cfg == "wav":
+    if cfg == "cifar" or "wav" in cfg:
         args.loss_kwargs.pl_weight = 0  # disable path length regularization
         args.loss_kwargs.style_mixing_prob = 0  # disable style mixing
         # args.D_kwargs.architecture = "orig"  # disable residual skip connections
@@ -530,7 +532,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option(
     "--cfg",
     help="Base config [default: auto]",
-    type=click.Choice(["auto", "stylegan2", "paper256", "paper512", "paper1024", "cifar", "wav"]),
+    type=click.Choice(["auto", "stylegan2", "paper256", "paper512", "paper1024", "cifar", "wav", "wav-256"]),
 )
 @click.option("--gamma", help="Override R1 gamma", type=float)
 @click.option("--kimg", help="Override training duration", type=int, metavar="INT")
