@@ -1,16 +1,17 @@
 import os
+from copy import copy
 from timeit import timeit as time
 
 import dnnlib
 import legacy
+import torchvision as tv
+from tqdm import tqdm
+from training.dataset import ImageFolderDataset
+
 import torch
 import torch.quantization
-import torchvision as tv
 from diffq import DiffQuantizer
 from torch.nn import functional as F
-from tqdm import tqdm
-
-from training.dataset import ImageFolderDataset
 
 torch.backends.cudnn.benchmark = True
 device = "cuda:0"
@@ -21,10 +22,6 @@ with dnnlib.util.open_url(
     net_dict = legacy.load_network_pkl(fp)
     D = net_dict["D"].requires_grad_(False).to(device)
     G = net_dict["G"].requires_grad_(False).to(device)
-
-imgs = G(torch.randn(size=(18, 512), device=device), c=None)
-grid = tv.utils.make_grid(imgs, nrow=6, normalize=True)
-tv.utils.save_image(grid, "original.jpg")
 
 loader = torch.utils.data.DataLoader(
     ImageFolderDataset("/home/hans/datasets/naomo/1024/"), num_workers=8, batch_size=2,
@@ -66,22 +63,17 @@ for i, (real_imgs, labels) in enumerate(tqdm(loader)):
     loss_D.backward()
     opt_D.step()
 
-    if i == 100:
+    if i == 10:
         break
 
-# torch.save(quantizer.get_quantized_state(), "/home/hans/modelzoo/quantized-naomo.pt")
-quantizer.quantize()
-qG = G.clone()
+quantizer.quantize()  # why does this error?!?
+qG = copy(G)
 print(qG)
 
 with dnnlib.util.open_url(
     "/home/hans/modelzoo/00038-naomo-mirror-wav-resumeffhq1024/network-snapshot-000140.pkl"
 ) as fp:
     G = net_dict["G_ema"].requires_grad_(False).to(device)
-
-imgs = qG(torch.randn(size=(18, 512), device=device), c=None)
-grid = tv.utils.make_grid(imgs, nrow=6, normalize=True)
-tv.utils.save_image(grid, "quantized.jpg")
 
 
 def print_size_of_model(model, label=""):
@@ -97,30 +89,31 @@ f = print_size_of_model(G, "original")
 q = print_size_of_model(qG, "quantized")
 print("{0:.2f} times smaller".format(f / q))
 
-
 inputs = torch.randn(size=(1, 512), device=device)
-# compare the performance
+
 print("Floating point FP32")
 print(time(lambda: G(inputs, c=None), number=100))
-
 print("Quantized INT8")
 print(time(lambda: qG(inputs, c=None), number=100))
-
 
 # run the float model
 out1 = G(inputs, c=None)
 mag1 = torch.mean(abs(out1)).item()
 print("mean absolute value of output tensor values in the FP32 model is {0:.5f} ".format(mag1))
-
-# run the quantized model
 out2 = qG(inputs, c=None)
 mag2 = torch.mean(abs(out2)).item()
 print("mean absolute value of output tensor values in the INT8 model is {0:.5f}".format(mag2))
-
-# compare them
 mag3 = torch.mean(abs(out1 - out2)).item()
 print(
     "mean absolute value of the difference between the output tensors is {0:.5f} or {1:.2f} percent".format(
         mag3, mag3 / mag1 * 100
     )
 )
+
+imgs = qG(torch.randn(size=(18, 512), device=device), c=None)
+grid = tv.utils.make_grid(imgs, nrow=6, normalize=True)
+tv.utils.save_image(grid, "quantized.jpg")
+
+imgs = G(torch.randn(size=(18, 512), device=device), c=None)
+grid = tv.utils.make_grid(imgs, nrow=6, normalize=True)
+tv.utils.save_image(grid, "original.jpg")

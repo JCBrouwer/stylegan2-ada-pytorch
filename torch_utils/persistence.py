@@ -12,15 +12,17 @@ The pickled code is automatically imported into a separate Python module
 during unpickling. This way, any previously exported pickles will remain
 usable even if the original code is no longer available, or if the current
 version of the code is not consistent with what was originally pickled."""
-
-import sys
-import pickle
-import io
-import inspect
 import copy
-import uuid
+import inspect
+import io
+import pickle
+import re
+import sys
 import types
+import uuid
+
 import dnnlib
+import torch
 
 
 def remove_shape_asserts(meta):
@@ -28,11 +30,35 @@ def remove_shape_asserts(meta):
     return meta
 
 
+def set_conditioning_default(meta):
+    meta.module_src = meta.module_src.replace("def forward(self, z, c,", "def forward(self, z, c=None,")
+    return meta
+
+
+def remove_profiling_ops(meta):
+    meta.module_src = "import contextlib;" + meta.module_src
+    meta.module_src = meta.module_src.replace(
+        "torch.autograd.profiler.record_function(", "contextlib.nullcontext(enter_result="
+    )
+    meta.module_src = meta.module_src.replace("@misc.profiled_function", "")
+    return meta
+
+
+def remove_aten_square(meta):
+    meta.module_src = re.sub("(.)\.square\(\)", "(\\1 * \\1)", meta.module_src)
+    return meta
+
+
 # ----------------------------------------------------------------------------
 
 _version = 6  # internal version number
 _decorators = set()  # {decorator_class, ...}
-_import_hooks = [remove_shape_asserts]  # [hook_function, ...]
+_import_hooks = [
+    remove_shape_asserts,
+    set_conditioning_default,
+    remove_profiling_ops,
+    remove_aten_square,
+]
 _module_to_src_dict = dict()  # {module: src, ...}
 _src_to_module_dict = dict()  # {src: module, ...}
 

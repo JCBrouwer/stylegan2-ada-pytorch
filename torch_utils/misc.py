@@ -107,6 +107,8 @@ def assert_shape(tensor, ref_shape):
 
 
 def profiled_function(fn):
+    print("profiling", fn.__name__)
+
     def decorator(*args, **kwargs):
         with torch.autograd.profiler.record_function(fn.__name__):
             return fn(*args, **kwargs)

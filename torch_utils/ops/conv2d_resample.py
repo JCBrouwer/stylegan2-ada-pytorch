@@ -11,10 +11,10 @@
 import torch
 
 from .. import misc
-from . import conv2d_gradfix
-from . import upfirdn2d
-from .upfirdn2d import _parse_padding
-from .upfirdn2d import _get_filter_size
+from . import conv2d_gradfix, upfirdn2d
+from .flip import flip
+from .upfirdn2d import _get_filter_size, _parse_padding
+
 
 # ----------------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
     if (
         not flip_weight
     ):  # conv2d() actually performs correlation (flip_weight=True) not convolution (flip_weight=False).
-        w = w.flip([2, 3])
+        w = flip(w, [2, 3])
 
     # Workaround performance pitfall in cuDNN 8.0.5, triggered when using
     # 1x1 kernel + memory_format=channels_last + less than 64 channels.
@@ -62,7 +62,7 @@ def _conv2d_wrapper(x, w, stride=1, padding=0, groups=1, transpose=False, flip_w
 # ----------------------------------------------------------------------------
 
 
-@misc.profiled_function
+# @misc.profiled_function
 def conv2d_resample(x, w, f=None, up=1, down=1, padding=0, groups=1, flip_weight=True, flip_filter=False):
     r"""2D convolution with optional up/downsampling.
 

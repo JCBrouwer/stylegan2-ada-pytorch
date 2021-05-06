@@ -11,12 +11,13 @@
 import os
 import sys
 import warnings
+
 import numpy as np
 import torch
 
-from .. import custom_ops
-from .. import misc
+from .. import custom_ops, misc
 from . import conv2d_gradfix
+from .flip import flip
 
 # ----------------------------------------------------------------------------
 
@@ -119,7 +120,7 @@ def setup_filter(f, device=torch.device("cpu"), normalize=True, flip_filter=Fals
     if normalize:
         f /= f.sum()
     if flip_filter:
-        f = f.flip(list(range(f.ndim)))
+        f = flip(f, list(range(f.ndim)))
     f = f * (gain ** (f.ndim / 2))
     f = f.to(device=device)
     return f
@@ -128,7 +129,7 @@ def setup_filter(f, device=torch.device("cpu"), normalize=True, flip_filter=Fals
 # ----------------------------------------------------------------------------
 
 
-def upfirdn2d(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1, impl="cuda"):
+def upfirdn2d(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1, impl="ref"):
     r"""Pad, upsample, filter, and downsample a batch of 2D images.
 
     Performs the following sequence of operations for each channel:
@@ -178,7 +179,7 @@ def upfirdn2d(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1, impl="cu
 # ----------------------------------------------------------------------------
 
 
-@misc.profiled_function
+# @misc.profiled_function
 def _upfirdn2d_ref(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1):
     """Slow reference implementation of `upfirdn2d()` using standard PyTorch ops.
     """
@@ -206,7 +207,7 @@ def _upfirdn2d_ref(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1):
     f = f * (gain ** (f.ndim / 2))
     f = f.to(x.dtype)
     if not flip_filter:
-        f = f.flip(list(range(f.ndim)))
+        f = flip(f, list(range(f.ndim)))
 
     # Convolve with the filter.
     f = f[np.newaxis, np.newaxis].repeat([num_channels, 1] + [1] * f.ndim)
@@ -290,7 +291,7 @@ def _upfirdn2d_cuda(up=1, down=1, padding=0, flip_filter=False, gain=1):
 # ----------------------------------------------------------------------------
 
 
-def filter2d(x, f, padding=0, flip_filter=False, gain=1, impl="cuda"):
+def filter2d(x, f, padding=0, flip_filter=False, gain=1, impl="ref"):
     r"""Filter a batch of 2D images using the given 2D FIR filter.
 
     By default, the result is padded so that its shape matches the input.
@@ -328,7 +329,7 @@ def filter2d(x, f, padding=0, flip_filter=False, gain=1, impl="cuda"):
 # ----------------------------------------------------------------------------
 
 
-def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1, impl="cuda"):
+def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1, impl="ref"):
     r"""Upsample a batch of 2D images using the given 2D FIR filter.
 
     By default, the result is padded so that its shape is a multiple of the input.
@@ -369,7 +370,7 @@ def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1, impl="cuda"):
 # ----------------------------------------------------------------------------
 
 
-def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1, impl="cuda"):
+def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1, impl="ref"):
     r"""Downsample a batch of 2D images using the given 2D FIR filter.
 
     By default, the result is padded so that its shape is a fraction of the input.

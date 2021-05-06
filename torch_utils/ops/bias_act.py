@@ -94,7 +94,7 @@ def _init():
 # ----------------------------------------------------------------------------
 
 
-def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, impl="cuda"):
+def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, impl="ref"):
     r"""Fused bias and activation function.
 
     Adds bias `b` to activation tensor `x`, evaluates activation function `act`,
@@ -134,7 +134,7 @@ def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, 
 # ----------------------------------------------------------------------------
 
 
-@misc.profiled_function
+# @misc.profiled_function
 def _bias_act_ref(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None):
     """Slow reference implementation of `bias_act()` using standard TensorFlow ops.
     """
