@@ -15,13 +15,7 @@ model_name = "StyleGAN"
 device = "cuda"
 tvmdev = tvm.device(device)
 
-loader = torch.utils.data.DataLoader(
-    ImageFolderDataset("/home/hans/datasets/naomo/1024/"), num_workers=8, batch_size=2,
-)
-
-with dnnlib.util.open_url(
-    "/home/hans/modelzoo/00038-naomo-mirror-wav-resumeffhq1024/network-snapshot-000140.pkl"
-) as fp:
+with dnnlib.util.open_url("afhqwild.pkl") as fp:
     net_dict = legacy.load_network_pkl(fp)
     generator = net_dict["G"].requires_grad_(False).to(device)
 
@@ -36,12 +30,16 @@ def randn(inputs, input_types):
 print(generator.synthesis.b256.conv0)
 print(generator.synthesis.b256.conv0.code)
 print(generator.synthesis.b256.conv0.graph)
-# exit()
+
 mod, params = relay.frontend.from_pytorch(generator, [("input", data_shape)], {"aten::randn": randn})
 # torch.onnx.export(generator, torch.randn(data_shape, device=device), "generator.onnx", export_params=True, verbose=True)
 # mod, params = relay.frontend.from_onnx(onnx.load("generator.onnx"), shape={"0": data_shape})
 
 print(mod)
+
+loader = torch.utils.data.DataLoader(
+    ImageFolderDataset("/home/hans/datasets/naomo/1024/"), num_workers=8, batch_size=2,
+)
 with relay.quantize.qconfig(calibrate_mode="kl_divergence", weight_scale="max"):
     mod = relay.quantize.quantize(mod, params, dataset=loader)
 print(mod)
