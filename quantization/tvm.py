@@ -146,11 +146,11 @@ if __name__ == "__main__":
 
     mod, params = relay_module(generator, use_onnx=use_onnx)
 
-    # autotune(mod, params)
+    autotune(mod, params)
 
     # tvmgen = build(mod, params)
-    qtvmgen = quantize(mod, params)
-    # tunegen = tuned_generator()
+    # qtvmgen = quantize(mod, params)
+    tunegen = tuned_generator()
 
     print("PyTorch")
     print(time(lambda: generator(torch.randn(size=input_shape, device=device)), number=100) * 10, "ms")
@@ -158,8 +158,8 @@ if __name__ == "__main__":
     # print("ONNX TVM" if use_onnx else "TVM")
     # print(time(lambda: tvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
 
-    print("ONNX Quantized" if use_onnx else "Quantized")
-    print(time(lambda: qtvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
+    # print("ONNX Quantized" if use_onnx else "Quantized")
+    # print(time(lambda: qtvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
 
-    # print("ONNX Tuned" if use_onnx else "Tuned")
-    # print(time(lambda: tunegen(torch.randn(size=input_shape)), number=100) * 10, "ms")
+    print("ONNX Tuned" if use_onnx else "Tuned")
+    print(time(lambda: tunegen(torch.randn(size=input_shape)), number=100) * 10, "ms")

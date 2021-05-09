@@ -43,7 +43,7 @@ print("Quantizing...")
 with relay.quantize.qconfig(calibrate_mode="global_scale"):
     mod = relay.quantize.quantize(mod, params)
 # with relay.quantize.qconfig(calibrate_mode="kl_divergence", weight_scale="power2"):
-    # mod = relay.quantize.quantize(mod, params, dataset=calibrate_dataset())
+#     mod = relay.quantize.quantize(mod, params, dataset=calibrate_dataset())
 qG = relay.create_executor("vm", mod, tvm.device(device), device).evaluate()
 
 
