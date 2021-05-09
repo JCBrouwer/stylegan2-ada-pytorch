@@ -9,24 +9,26 @@
 import numpy as np
 import torch
 from torch_utils import misc
-from torch_utils import persistence
+
+# from torch_utils import persistence
 from torch_utils.ops import conv2d_resample
 from torch_utils.ops import upfirdn2d
 from torch_utils.ops import bias_act
 from torch_utils.ops import fma
+import contextlib
 
 # ----------------------------------------------------------------------------
 
 
-@misc.profiled_function
+# @misc.profiled_function
 def normalize_2nd_moment(x, dim=1, eps=1e-8):
-    return x * (x.square().mean(dim=dim, keepdim=True) + eps).rsqrt()
+    return x * ((x * x).mean(dim=dim, keepdim=True) + eps).rsqrt()
 
 
 # ----------------------------------------------------------------------------
 
 
-@misc.profiled_function
+# @misc.profiled_function
 def modulated_conv2d(
     x,  # Input tensor of shape [batch_size, in_channels, in_height, in_width].
     weight,  # Weight tensor of shape [out_channels, in_channels, kernel_height, kernel_width].
@@ -57,7 +59,7 @@ def modulated_conv2d(
         w = weight.unsqueeze(0)  # [NOIkk]
         w = w * styles.reshape(batch_size, 1, -1, 1, 1)  # [NOIkk]
     if demodulate:
-        dcoefs = (w.square().sum(dim=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+        dcoefs = ((w * w).sum(dim=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
     if demodulate and fused_modconv:
         w = w * dcoefs.reshape(batch_size, -1, 1, 1, 1)  # [NOIkk]
 
@@ -99,7 +101,7 @@ def modulated_conv2d(
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class FullyConnectedLayer(torch.nn.Module):
     def __init__(
         self,
@@ -136,7 +138,7 @@ class FullyConnectedLayer(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class Conv2dLayer(torch.nn.Module):
     def __init__(
         self,
@@ -198,7 +200,7 @@ class Conv2dLayer(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class MappingNetwork(torch.nn.Module):
     def __init__(
         self,
@@ -240,10 +242,10 @@ class MappingNetwork(torch.nn.Module):
         if num_ws is not None and w_avg_beta is not None:
             self.register_buffer("w_avg", torch.zeros([w_dim]))
 
-    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
+    def forward(self, z, c=None, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
         # Embed, normalize, and concat inputs.
         x = None
-        with torch.autograd.profiler.record_function("input"):
+        with contextlib.nullcontext("input"):
             if self.z_dim > 0:
                 x = normalize_2nd_moment(z.to(torch.float32))
             if self.c_dim > 0:
@@ -257,17 +259,17 @@ class MappingNetwork(torch.nn.Module):
 
         # Update moving average of W.
         if self.w_avg_beta is not None and self.training and not skip_w_avg_update:
-            with torch.autograd.profiler.record_function("update_w_avg"):
+            with contextlib.nullcontext("update_w_avg"):
                 self.w_avg.copy_(x.detach().mean(dim=0).lerp(self.w_avg, self.w_avg_beta))
 
         # Broadcast.
         if self.num_ws is not None:
-            with torch.autograd.profiler.record_function("broadcast"):
+            with contextlib.nullcontext("broadcast"):
                 x = x.unsqueeze(1).repeat([1, self.num_ws, 1])
 
         # Apply truncation.
         if truncation_psi != 1:
-            with torch.autograd.profiler.record_function("truncate"):
+            with contextlib.nullcontext("truncate"):
                 assert self.w_avg_beta is not None
                 if self.num_ws is None or truncation_cutoff is None:
                     x = self.w_avg.lerp(x, truncation_psi)
@@ -279,7 +281,7 @@ class MappingNetwork(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class SynthesisLayer(torch.nn.Module):
     def __init__(
         self,
@@ -350,7 +352,7 @@ class SynthesisLayer(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class ToRGBLayer(torch.nn.Module):
     def __init__(self, in_channels, out_channels, w_dim, kernel_size=1, conv_clamp=None, channels_last=False):
         super().__init__()
@@ -373,7 +375,7 @@ class ToRGBLayer(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class SynthesisBlock(torch.nn.Module):
     def __init__(
         self,
@@ -492,7 +494,7 @@ class SynthesisBlock(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class SynthesisNetwork(torch.nn.Module):
     def __init__(
         self,
@@ -537,7 +539,7 @@ class SynthesisNetwork(torch.nn.Module):
 
     def forward(self, ws, **block_kwargs):
         block_ws = []
-        with torch.autograd.profiler.record_function("split_ws"):
+        with contextlib.nullcontext("split_ws"):
             ws = ws.to(torch.float32)
             w_idx = 0
             for res in self.block_resolutions:
@@ -555,7 +557,7 @@ class SynthesisNetwork(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class Generator(torch.nn.Module):
     def __init__(
         self,
@@ -579,7 +581,7 @@ class Generator(torch.nn.Module):
         self.num_ws = self.synthesis.num_ws
         self.mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
 
-    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
+    def forward(self, z, c=None, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
         ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
         img = self.synthesis(ws, **synthesis_kwargs)
         return img
@@ -588,7 +590,7 @@ class Generator(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class DiscriminatorBlock(torch.nn.Module):
     def __init__(
         self,
@@ -706,7 +708,7 @@ class DiscriminatorBlock(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class MinibatchStdLayer(torch.nn.Module):
     def __init__(self, group_size, num_channels=1):
         super().__init__()
@@ -724,7 +726,7 @@ class MinibatchStdLayer(torch.nn.Module):
             G, -1, F, c, H, W
         )  # [GnFcHW] Split minibatch N into n groups of size G, and channels C into F groups of size c.
         y = y - y.mean(dim=0)  # [GnFcHW] Subtract mean over group.
-        y = y.square().mean(dim=0)  # [nFcHW]  Calc variance over group.
+        y = (y * y).mean(dim=0)  # [nFcHW]  Calc variance over group.
         y = (y + 1e-8).sqrt()  # [nFcHW]  Calc stddev over group.
         y = y.mean(dim=[2, 3, 4])  # [nF]     Take average over channels and pixels.
         y = y.reshape(-1, F, 1, 1)  # [nF11]   Add missing dimensions.
@@ -736,7 +738,7 @@ class MinibatchStdLayer(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class DiscriminatorEpilogue(torch.nn.Module):
     def __init__(
         self,
@@ -800,7 +802,7 @@ class DiscriminatorEpilogue(torch.nn.Module):
 # ----------------------------------------------------------------------------
 
 
-@persistence.persistent_class
+# @persistence.persistent_class
 class Discriminator(torch.nn.Module):
     def __init__(
         self,

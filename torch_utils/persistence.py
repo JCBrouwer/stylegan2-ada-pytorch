@@ -49,6 +49,20 @@ def remove_aten_square(meta):
     return meta
 
 
+def more_prints_pls(meta):
+    meta.module_src = meta.module_src.replace(
+        "# Pre-normalize inputs to avoid FP16 overflow.", "print(np.sqrt(in_channels * kh * kw))",
+    )
+    return meta
+
+
+def const_weight_norm(meta):
+    meta.module_src = meta.module_src.replace(
+        "np.sqrt(in_channels * kh * kw)", "np.sqrt(int(in_channels) * int(kh) * int(kw))",
+    )
+    return meta
+
+
 # ----------------------------------------------------------------------------
 
 _version = 6  # internal version number
@@ -58,6 +72,8 @@ _import_hooks = [
     set_conditioning_default,
     remove_profiling_ops,
     remove_aten_square,
+    const_weight_norm,
+    # more_prints_pls,
 ]
 _module_to_src_dict = dict()  # {module: src, ...}
 _src_to_module_dict = dict()  # {src: module, ...}

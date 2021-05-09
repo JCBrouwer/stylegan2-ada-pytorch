@@ -1,62 +1,165 @@
+import functools
+import os
 from timeit import timeit as time
 
 import dnnlib
 import legacy
-import torchvision as tv
-from training.dataset import ImageFolderDataset
+import onnx
+from tqdm import tqdm
 
 import torch
 import tvm
-from tvm import relay
+import tvm.contrib.graph_executor as runtime
+from tvm import autotvm, relay
+from tvm.autotvm.tuner import XGBTuner
 
-batch_size = 1
-data_shape = (batch_size, 512)
-model_name = "StyleGAN"
-device = "cuda"
-tvmdev = tvm.device(device)
-
-with dnnlib.util.open_url("afhqwild.pkl") as fp:
-    net_dict = legacy.load_network_pkl(fp)
-    generator = net_dict["G"].requires_grad_(False).to(device)
+torch.set_grad_enabled(False)
+torch.backends.cudnn.benchmark = True
 
 
-generator = torch.jit.trace(generator, torch.randn(data_shape, device=device)).eval()
+def load_network():
+    print("Loading...")
+    with dnnlib.util.open_url(
+        "/home/hans/modelzoo/00038-naomo-mirror-wav-resumeffhq1024/network-snapshot-000140.pkl"
+    ) as fp:
+        net_dict = legacy.load_network_pkl(fp)
+        generator = net_dict["G"].requires_grad_(False).to(device)
+
+    generator = generator.float()
+    generator.forward = functools.partial(generator.forward, c=None, force_fp32=True)
+    generator.eval()
+    generator = torch.jit.trace(generator, torch.randn(input_shape, device=device)).eval()
+    generator.to(device)
+
+    # warm up cudnn autotuner
+    for _ in range(5):
+        generator(torch.randn(input_shape, device=device))
+
+    return generator
 
 
 def randn(inputs, input_types):
-    return tvm.relay.expr.const(torch.randn(size=(1, *inputs[0][1:])).numpy())
+    return tvm.relay.expr.const(
+        torch.randn(
+            size=tuple(int(i.data.asnumpy()) if isinstance(i, tvm.relay.Constant) else int(i) for i in inputs[0])
+        ).numpy()
+    )
 
 
-print(generator.synthesis.b256.conv0)
-print(generator.synthesis.b256.conv0.code)
-print(generator.synthesis.b256.conv0.graph)
+def relay_module(generator, use_onnx=False):
+    if use_onnx:
+        torch.onnx.export(
+            generator, torch.randn(input_shape, device=device), "generator.onnx", export_params=True, verbose=True
+        )
+        return relay.frontend.from_onnx(onnx.load("generator.onnx"), shape={"0": input_shape})
+    return relay.frontend.from_pytorch(generator, [("input", input_shape)], {"aten::randn": randn})
 
-mod, params = relay.frontend.from_pytorch(generator, [("input", data_shape)], {"aten::randn": randn})
-# torch.onnx.export(generator, torch.randn(data_shape, device=device), "generator.onnx", export_params=True, verbose=True)
-# mod, params = relay.frontend.from_onnx(onnx.load("generator.onnx"), shape={"0": data_shape})
 
-print(mod)
+def build(mod, params):
+    print("Building...")
+    with tvm.transform.PassContext(opt_level=3):
+        lib = relay.build(mod, target=device, params=params)
 
-loader = torch.utils.data.DataLoader(
-    ImageFolderDataset("/home/hans/datasets/naomo/1024/"), num_workers=8, batch_size=2,
-)
-with relay.quantize.qconfig(calibrate_mode="kl_divergence", weight_scale="max"):
-    mod = relay.quantize.quantize(mod, params, dataset=loader)
-print(mod)
-executor = relay.create_executor("vm", mod, tvmdev, device)
+    m = runtime.GraphModule(lib["default"](tvmdev))
 
-inputs = torch.randn(size=data_shape, device=device)
-# compare the performance
-print("PyTorch")
-print(time(lambda: generator(inputs), number=100))
-print("Quantized")
-print(time(lambda: executor.evaluate()(inputs), number=100))
+    def generate(input):
+        m.set_input("input", tvm.nd.array(input))
+        m.run()
+        return m.get_output(0)
 
-imgs = []
-for _ in range(18):
-    imgs.append(executor.evaluate()(torch.randn(size=data_shape)))
-imgs = torch.cat(imgs)
-tv.utils.save_image(tv.utils.make_grid(imgs, nrow=6), "quantized.jpg")
+    return generate
 
-imgs = generator(torch.randn(size=(18, 512), device=device))
-tv.utils.save_image(tv.utils.make_grid(imgs, nrow=6), "original.jpg")
+
+def calibrate_dataset():
+    for _ in tqdm(range(32)):
+        yield {"input": torch.randn(input_shape)}
+
+
+def quantize(mod, params):
+    print("Quantizing...")
+    with relay.quantize.qconfig(calibrate_mode="kl_divergence", weight_scale="power2"):
+        mod = relay.quantize.quantize(mod, params, dataset=calibrate_dataset())
+    executor = relay.create_executor("vm", mod, tvmdev, device)
+    return executor.evaluate()
+
+
+def autotune(mod, params):
+    print("Tuning...")
+    tasks = autotvm.task.extract_from_program(mod=mod, params=params, target=target)
+    for i, tsk in enumerate(reversed(tasks)):
+        prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
+
+        tuner_obj = XGBTuner(tsk, loss_type="rank")
+
+        if os.path.isfile(log_file):
+            tuner_obj.load_history(autotvm.record.load_from_file(log_file))
+
+        trials = min(tuning_trials, len(tsk.config_space))
+        tuner_obj.tune(
+            n_trial=trials,
+            early_stopping=tuning_early_stopping,
+            measure_option=autotvm.measure_option(
+                builder=autotvm.LocalBuilder(timeout=10),
+                runner=autotvm.LocalRunner(number=20, repeat=3, timeout=4, min_repeat_ms=150),
+            ),
+            callbacks=[autotvm.callback.progress_bar(trials, prefix=prefix), autotvm.callback.log_to_file(log_file),],
+        )
+
+
+def tuned_generator():
+    autotvm.record.pick_best(log_file, best_config)
+
+    with autotvm.apply_history_best(log_file):
+        with tvm.transform.PassContext(opt_level=3):
+            lib = relay.build_module.build(mod, target=target, params=params)
+
+        dev = tvm.device(str(target), 0)
+        m = runtime.GraphModule(lib["default"](dev))
+
+        def generate(input):
+            m.set_input("input", tvm.nd.array(input))
+            m.run()
+            return m.get_output(0)
+
+    return generate
+
+
+if __name__ == "__main__":
+    batch_size = 1
+    input_shape = (batch_size, 512)
+    output_shape = (batch_size, 3, 1024, 1024)
+
+    device = "cuda"
+    tvmdev = tvm.device(device)
+    target = tvm.target.cuda()
+
+    use_onnx = False
+
+    tuning_trials = 2000
+    tuning_early_stopping = 600
+
+    network_name = "stylgan2-ada-generator"
+    best_config = f"{network_name}.config"
+    log_file = f"{network_name}.log"
+
+    generator = load_network()
+
+    mod, params = relay_module(generator, use_onnx=use_onnx)
+
+    # autotune(mod, params)
+
+    # tvmgen = build(mod, params)
+    qtvmgen = quantize(mod, params)
+    # tunegen = tuned_generator()
+
+    print("PyTorch")
+    print(time(lambda: generator(torch.randn(size=input_shape, device=device)), number=100) * 10, "ms")
+
+    # print("ONNX TVM" if use_onnx else "TVM")
+    # print(time(lambda: tvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
+
+    print("ONNX Quantized" if use_onnx else "Quantized")
+    print(time(lambda: qtvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
+
+    # print("ONNX Tuned" if use_onnx else "Tuned")
+    # print(time(lambda: tunegen(torch.randn(size=input_shape)), number=100) * 10, "ms")
