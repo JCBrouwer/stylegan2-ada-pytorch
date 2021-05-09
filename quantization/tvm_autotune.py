@@ -5,13 +5,12 @@ from timeit import timeit as time
 import dnnlib
 import legacy
 import onnx
-from tqdm import tqdm
-
-import torch
 import tvm
 import tvm.contrib.graph_executor as runtime
 from tvm import autotvm, relay
 from tvm.autotvm.tuner import XGBTuner
+
+import torch
 
 torch.set_grad_enabled(False)
 torch.backends.cudnn.benchmark = True
@@ -30,10 +29,8 @@ def load_network():
     generator.eval()
     generator = torch.jit.trace(generator, torch.randn(input_shape, device=device)).eval()
     generator.to(device)
-
-    # warm up cudnn autotuner
     for _ in range(5):
-        generator(torch.randn(input_shape, device=device))
+        generator(torch.randn(input_shape, device=device))  # warm up cudnn autotuner
 
     return generator
 
@@ -68,19 +65,6 @@ def build(mod, params):
         return m.get_output(0)
 
     return generate
-
-
-def calibrate_dataset():
-    for _ in tqdm(range(32)):
-        yield {"input": torch.randn(input_shape)}
-
-
-def quantize(mod, params):
-    print("Quantizing...")
-    with relay.quantize.qconfig(calibrate_mode="kl_divergence", weight_scale="power2"):
-        mod = relay.quantize.quantize(mod, params, dataset=calibrate_dataset())
-    executor = relay.create_executor("vm", mod, tvmdev, device)
-    return executor.evaluate()
 
 
 def autotune(mod, params):
@@ -146,20 +130,16 @@ if __name__ == "__main__":
 
     mod, params = relay_module(generator, use_onnx=use_onnx)
 
-    autotune(mod, params)
+    tvmgen = build(mod, params)
 
-    # tvmgen = build(mod, params)
-    # qtvmgen = quantize(mod, params)
+    autotune(mod, params)
     tunegen = tuned_generator()
 
     print("PyTorch")
     print(time(lambda: generator(torch.randn(size=input_shape, device=device)), number=100) * 10, "ms")
 
-    # print("ONNX TVM" if use_onnx else "TVM")
-    # print(time(lambda: tvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
-
-    # print("ONNX Quantized" if use_onnx else "Quantized")
-    # print(time(lambda: qtvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
+    print("ONNX TVM" if use_onnx else "TVM")
+    print(time(lambda: tvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
 
     print("ONNX Tuned" if use_onnx else "Tuned")
     print(time(lambda: tunegen(torch.randn(size=input_shape)), number=100) * 10, "ms")

@@ -33,17 +33,11 @@ def randn(inputs, input_types):
 
 mod, params = relay.frontend.from_pytorch(G, [("input", input_shape)], {"aten::randn": randn})
 
-
-def calibrate_dataset():
-    for _ in tqdm(range(32)):
-        yield {"input": torch.randn(input_shape)}
-
-
 print("Quantizing...")
+with tvm.transform.PassContext(opt_level=3):
+    mod = relay.transform.FoldConstant()(mod)
 with relay.quantize.qconfig(calibrate_mode="global_scale"):
     mod = relay.quantize.quantize(mod, params)
-# with relay.quantize.qconfig(calibrate_mode="kl_divergence", weight_scale="power2"):
-#     mod = relay.quantize.quantize(mod, params, dataset=calibrate_dataset())
 qG = relay.create_executor("vm", mod, tvm.device(device), device).evaluate()
 
 
