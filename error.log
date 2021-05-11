@@ -1,0 +1,29 @@
+Loading...
+/home/hans/.conda/envs/hans/lib/python3.8/site-packages/torch/jit/_trace.py:958: TracerWarning: Output nr 1. of the traced function does not match the corresponding output of the Python function. Detailed error:
+With rtol=1e-05 and atol=1e-05, found 3145208 element(s) (out of 3145728) whose difference(s) exceeded the margin of error (including 0 nan comparisons). The greatest difference was 2.0822536945343018 (-0.780437707901001 vs. 1.3018159866333008), which occurred at index (0, 1, 459, 172).
+  _check_trace(
+Tuning...
+[Task  1/56]  Current/Best:   13.76/  17.66 GFLOPS | Progress: (10/10) | 14.23 s Done.
+[Task  2/56]  Current/Best:  231.55/ 231.55 GFLOPS | Progress: (48/2000) | 88.95 s/home/hans/.conda/envs/hans/lib/python3.8/site-packages/xgboost/training.py:17: UserWarning: Old style callback is deprecated.  See: https://xgboost.readthedocs.io/en/latest/python/callbacks.html
+  warnings.warn(f'Old style callback is deprecated.  See: {link}', UserWarning)
+[Task  2/56]  Current/Best: 2857.59/3577.59 GFLOPS | Progress: (1200/2000) | 3338.85 s Done.
+[Task  3/56]  Current/Best: 1453.64/1495.01 GFLOPS | Progress: (1584/2000) | 4138.76 s Done.
+[Task  4/56]  Current/Best: 4872.06/4898.09 GFLOPS | Progress: (1704/2000) | 5731.94 s Done.
+[Task  5/56]  Current/Best:  709.05/7847.01 GFLOPS | Progress: (1296/2000) | 3833.78 s Done.
+[Task  6/56]  Current/Best:   94.29/ 528.08 GFLOPS | Progress: (1032/2000) | 2075.98 s Done.
+[Task  7/56]  Current/Best:   24.26/  33.90 GFLOPS | Progress: (10/10) | 14.96 s Done.
+Traceback (most recent call last):
+  File "/home/hans/.conda/envs/hans/lib/python3.8/runpy.py", line 193, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/hans/.conda/envs/hans/lib/python3.8/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/hans/code/maua-stylegan2/nvsg2a/quantization/tvm_autotune.py", line 135, in <module>
+    autotune(mod, params)
+  File "/home/hans/code/maua-stylegan2/nvsg2a/quantization/tvm_autotune.py", line 79, in autotune
+    tuner_obj.load_history(autotvm.record.load_from_file(log_file))
+  File "/home/hans/code/tvm/python/tvm/autotvm/tuner/model_based_tuner.py", line 294, in load_history
+    success = base_model.fit_log(data_set, self.plan_size)
+  File "/home/hans/code/tvm/python/tvm/autotvm/tuner/xgboost_cost_model.py", line 256, in fit_log
+    for x, y in res:
+TypeError: cannot unpack non-iterable NoneType object
+

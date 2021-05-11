@@ -83,8 +83,8 @@ def autotune(mod, params):
             n_trial=trials,
             early_stopping=tuning_early_stopping,
             measure_option=autotvm.measure_option(
-                builder=autotvm.LocalBuilder(timeout=10),
-                runner=autotvm.LocalRunner(number=20, repeat=3, timeout=4, min_repeat_ms=150),
+                builder=autotvm.LocalBuilder(timeout=30),
+                runner=autotvm.LocalRunner(number=20, repeat=3, timeout=15, min_repeat_ms=150),
             ),
             callbacks=[autotvm.callback.progress_bar(trials, prefix=prefix), autotvm.callback.log_to_file(log_file),],
         )
@@ -130,7 +130,7 @@ if __name__ == "__main__":
 
     mod, params = relay_module(generator, use_onnx=use_onnx)
 
-    tvmgen = build(mod, params)
+    # tvmgen = build(mod, params)
 
     autotune(mod, params)
     tunegen = tuned_generator()
@@ -138,8 +138,8 @@ if __name__ == "__main__":
     print("PyTorch")
     print(time(lambda: generator(torch.randn(size=input_shape, device=device)), number=100) * 10, "ms")
 
-    print("ONNX TVM" if use_onnx else "TVM")
-    print(time(lambda: tvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
+    # print("ONNX TVM" if use_onnx else "TVM")
+    # print(time(lambda: tvmgen(torch.randn(size=input_shape)), number=100) * 10, "ms")
 
     print("ONNX Tuned" if use_onnx else "Tuned")
     print(time(lambda: tunegen(torch.randn(size=input_shape)), number=100) * 10, "ms")
