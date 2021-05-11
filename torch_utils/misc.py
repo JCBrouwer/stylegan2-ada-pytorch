@@ -62,10 +62,10 @@ except AttributeError:
 # ----------------------------------------------------------------------------
 # Symbolic assert.
 
-try:
-    symbolic_assert = torch._assert  # 1.8.0a0 # pylint: disable=protected-access
-except AttributeError:
-    symbolic_assert = torch.Assert  # 1.7.0
+# try:
+#     symbolic_assert = torch._assert  # 1.8.0a0 # pylint: disable=protected-access
+# except AttributeError:
+#     symbolic_assert = torch.Assert  # 1.7.0
 
 # ----------------------------------------------------------------------------
 # Context manager to suppress known warnings in torch.jit.trace().
