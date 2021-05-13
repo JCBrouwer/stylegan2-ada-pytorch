@@ -71,7 +71,7 @@ def _get_filter_size(f):
     with misc.suppress_tracer_warnings():
         fw = int(fw)
         fh = int(fh)
-    misc.assert_shape(f, [fh, fw][: f.ndim])
+    # misc.assert_shape(f, [fh, fw][: f.ndim])
     assert fw >= 1 and fh >= 1
     return fw, fh
 
