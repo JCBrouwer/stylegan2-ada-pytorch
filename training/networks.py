@@ -17,6 +17,9 @@ from torch_utils.ops import bias_act
 from torch_utils.ops import fma
 import contextlib
 
+# profile_context = torch.autograd.profiler.record_function
+profile_context = contextlib.nullcontext
+
 # ----------------------------------------------------------------------------
 
 
@@ -245,7 +248,7 @@ class MappingNetwork(torch.nn.Module):
     def forward(self, z, c=None, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
         # Embed, normalize, and concat inputs.
         x = None
-        with contextlib.nullcontext("input"):
+        with profile_context("input"):
             if self.z_dim > 0:
                 x = normalize_2nd_moment(z.to(torch.float32))
             if self.c_dim > 0:
@@ -259,17 +262,17 @@ class MappingNetwork(torch.nn.Module):
 
         # Update moving average of W.
         if self.w_avg_beta is not None and self.training and not skip_w_avg_update:
-            with contextlib.nullcontext("update_w_avg"):
+            with profile_context("update_w_avg"):
                 self.w_avg.copy_(x.detach().mean(dim=0).lerp(self.w_avg, self.w_avg_beta))
 
         # Broadcast.
         if self.num_ws is not None:
-            with contextlib.nullcontext("broadcast"):
+            with profile_context("broadcast"):
                 x = x.unsqueeze(1).repeat([1, self.num_ws, 1])
 
         # Apply truncation.
         if truncation_psi != 1:
-            with contextlib.nullcontext("truncate"):
+            with profile_context("truncate"):
                 assert self.w_avg_beta is not None
                 if self.num_ws is None or truncation_cutoff is None:
                     x = self.w_avg.lerp(x, truncation_psi)
@@ -539,7 +542,7 @@ class SynthesisNetwork(torch.nn.Module):
 
     def forward(self, ws, **block_kwargs):
         block_ws = []
-        with contextlib.nullcontext("split_ws"):
+        with profile_context("split_ws"):
             ws = ws.to(torch.float32)
             w_idx = 0
             for res in self.block_resolutions:

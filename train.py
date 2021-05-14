@@ -18,6 +18,7 @@ import click
 import torch
 
 import dnnlib
+import wandb
 from metrics import metric_main
 from torch_utils import custom_ops, training_stats
 from training import training_loop
@@ -77,6 +78,7 @@ def setup_training_loop_kwargs(
     nhwc=None,  # Use NHWC memory format with FP16: <bool>, default = False
     nobench=None,  # Disable cuDNN benchmarking: <bool>, default = False
     workers=None,  # Override number of DataLoader workers: <int>, default = 3
+    pruning=None,
     **kwargs,
 ):
     print("Unrecognized arguments:", kwargs)
@@ -94,12 +96,12 @@ def setup_training_loop_kwargs(
     args.num_gpus = gpus
 
     if snap is None:
-        snap = 50
+        snap = 5
     assert isinstance(snap, int)
     if snap < 1:
         raise UserError("--snap must be at least 1")
-    args.image_snapshot_ticks = 1
-    args.network_snapshot_ticks = 5
+    args.image_snapshot_ticks = 4
+    args.network_snapshot_ticks = 10
 
     if metrics is None:
         metrics = ["fid50k_full"]
@@ -236,11 +238,13 @@ def setup_training_loop_kwargs(
 
     args.G_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
     args.D_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
-    args.loss_kwargs = dnnlib.EasyDict(class_name="efficiency.slimming.SlimmingLoss", r1_gamma=spec.gamma)
+    args.loss_kwargs = dnnlib.EasyDict(
+        class_name="efficiency.slimming.SlimmingLoss", r1_gamma=spec.gamma, pruning=pruning
+    )
 
     args.total_kimg = spec.kimg
-    args.batch_size = 8
     args.batch_gpu = 8
+    args.batch_size = gpus * args.batch_gpu
     args.ema_kimg = spec.ema
     args.ema_rampup = spec.ramp
 
@@ -467,7 +471,7 @@ def setup_training_loop_kwargs(
 
 
 def subprocess_fn(rank, args, temp_dir):
-    dnnlib.util.Logger(file_name=os.path.join(args.run_dir, "log.txt"), file_mode="a", should_flush=True)
+    dnnlib.util.Logger(file_name=os.path.join(args.run_dir, "log.txt"), file_mode="a", should_flush=False)
 
     # Init torch.distributed.
     if args.num_gpus > 1:
@@ -559,9 +563,12 @@ class CommaSeparatedList(click.ParamType):
 @click.option("--workers", help="Override number of DataLoader workers", type=int, metavar="INT")
 
 # W&B options.
-@click.option("--wbproj", help="W&B project to log to", type=str, required=True)
+@click.option("--wbproj", help="W&B project to log to", type=str)
 @click.option("--wbgroup", help="W&B group to log to", type=str, metavar=None)
 @click.option("--wbname", help="W&B run name", type=str, required=True)
+
+# Pruning options.
+@click.option("--pruning", help="Pruning strategy to use", type=click.Choice(["prox", "l1"]))
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -606,7 +613,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
       lsundog256     LSUN Dog trained at 256x256 resolution.
       <PATH or URL>  Custom network pickle.
     """
-    dnnlib.util.Logger(should_flush=True)
+    dnnlib.util.Logger(should_flush=False)
 
     # Setup training options.
     try:
@@ -650,15 +657,30 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     with open(os.path.join(args.run_dir, "training_options.json"), "wt") as f:
         json.dump(args, f, indent=2)
 
-    # Launch processes.
-    print("Launching processes...")
     torch.multiprocessing.set_start_method("spawn")
-    args.wb = {
-        "wbproj": config_kwargs["wbproj"],
-        "wbgroup": config_kwargs["wbgroup"],
-        "wbname": config_kwargs["wbname"],
-    }
-    args.wbconf = dict_flatten(args)
+
+    # Launch processes.
+    if config_kwargs["wbgroup"] is None:
+        wandb.init(
+            # project=config_kwargs["wbproj"],
+            project="Compressing StyleGAN",
+            entity="tud-cs4245-group-27",
+            name=config_kwargs["wbname"],
+            config=dict_flatten(args),
+            settings=wandb.Settings(start_method="thread"),
+        )
+    else:
+        wandb.init(
+            # project=config_kwargs["wbproj"],
+            project="Compressing StyleGAN",
+            entity="tud-cs4245-group-27",
+            group=config_kwargs["wbgroup"],
+            name=config_kwargs["wbname"],
+            config=dict_flatten(args),
+            settings=wandb.Settings(start_method="thread"),
+        )
+
+    print("Launching processes...")
     with tempfile.TemporaryDirectory() as temp_dir:
         if args.num_gpus == 1:
             subprocess_fn(rank=0, args=args, temp_dir=temp_dir)

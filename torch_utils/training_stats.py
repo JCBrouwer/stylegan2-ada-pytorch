@@ -55,7 +55,7 @@ def init_multiprocessing(rank, sync_device):
 # ----------------------------------------------------------------------------
 
 
-@misc.profiled_function
+# @misc.profiled_function
 def report(name, value):
     r"""Broadcasts the given set of scalars to all interested instances of
     `Collector`, across device and process boundaries.

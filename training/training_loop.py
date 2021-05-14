@@ -9,7 +9,7 @@
 import copy
 import json
 import os
-import pickle
+import cloudpickle as pickle  # pruning relies on local functions which regular pickle can't deal with
 import time
 
 import numpy as np
@@ -115,9 +115,9 @@ def training_loop(
     ada_interval=4,  # How often to perform ADA adjustment?
     ada_kimg=500,  # ADA adjustment speed, measured in how many kimg it takes for p to increase/decrease by one unit.
     total_kimg=25000,  # Total length of the training, measured in thousands of real images.
-    kimg_per_tick=4,  # Progress snapshot interval.
-    image_snapshot_ticks=50,  # How often to save image snapshots? None = disable.
-    network_snapshot_ticks=50,  # How often to save network snapshots? None = disable.
+    kimg_per_tick=0.25,  # Progress snapshot interval.
+    image_snapshot_ticks=4,  # How often to save image snapshots? None = disable.
+    network_snapshot_ticks=10,  # How often to save network snapshots? None = disable.
     resume_pkl=None,  # Network pickle to resume training from.
     cudnn_benchmark=True,  # Enable torch.backends.cudnn.benchmark?
     abort_fn=None,  # Callback function for determining whether to abort training. Must return consistent results across ranks.
@@ -135,13 +135,7 @@ def training_loop(
     conv2d_gradfix.enabled = True  # Improves training speed.
     grid_sample_gradfix.enabled = True  # Avoids errors with the augmentation pipe.
 
-    # Load training set.
-    if rank == 0:
-        print("Loading training set...")
-        if wb["wbgroup"] is None:
-            wandb.init(project=wb["wbproj"], name=wb["wbname"], config=wbconf)
-        else:
-            wandb.init(project=wb["wbproj"], group=wb["wbgroup"], name=wb["wbname"], config=wbconf)
+    # Load training set
     training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs)  # subclass of training.dataset.Dataset
     training_set_sampler = misc.InfiniteSampler(
         dataset=training_set, rank=rank, num_replicas=num_gpus, seed=random_seed
@@ -345,8 +339,9 @@ def training_loop(
             if ema_rampup is not None:
                 ema_nimg = min(ema_nimg, cur_nimg * ema_rampup)
             ema_beta = 0.5 ** (batch_size / max(ema_nimg, 1e-8))
-            for p_ema, p in zip(G_ema.parameters(), G.parameters()):
-                p_ema.copy_(p.lerp(p_ema, ema_beta))
+            G_params = {n: p for n, p in G.named_parameters()}
+            for name, p_ema in G_ema.named_parameters():
+                p_ema.copy_(G_params[name].lerp(p_ema, ema_beta))
             for b_ema, b in zip(G_ema.buffers(), G.buffers()):
                 b_ema.copy_(b)
 
@@ -362,7 +357,7 @@ def training_loop(
             )
             augment_pipe.p.copy_((augment_pipe.p + adjust).max(misc.constant(0, device=device)))
             if rank == 0:
-                wandb.log({"Augment": float(augment_pipe.p.cpu())}, step=int(cur_nimg / batch_size))
+                wandb.log({"Augment": float(augment_pipe.p.cpu())}, step=cur_nimg)
 
         # Perform maintenance tasks once per tick.
         done = cur_nimg >= total_kimg * 1000
@@ -406,13 +401,13 @@ def training_loop(
 
         # Save image snapshot.
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-            images = torch.cat([G_ema(z=z, c=c, noise_mode="const").cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+            images = torch.cat([G(z=z, c=c, noise_mode="const").cpu() for z, c in zip(grid_z, grid_c)]).numpy()
             save_image_grid(
                 images, os.path.join(run_dir, f"fakes{cur_nimg//1000:06d}.jpg"), drange=[-1, 1], grid_size=grid_size
             )
             wandb.log(
-                {"Generated Images EMA": wandb.Image(os.path.join(run_dir, f"fakes{cur_nimg//1000:06d}.jpg"))},
-                step=int(cur_nimg / batch_size),
+                {"Generated Images": wandb.Image(os.path.join(run_dir, f"fakes{cur_nimg//1000:06d}.jpg"))},
+                step=cur_nimg,
             )
 
         # Save network snapshot.
@@ -424,8 +419,10 @@ def training_loop(
                 if module is not None:
                     if num_gpus > 1:
                         misc.check_ddp_consistency(module, ignore_regex=r".*\.w_avg")
-                    module = copy.deepcopy(module).eval().requires_grad_(False).cpu()
-                snapshot_data[name] = module
+                try:
+                    snapshot_data[name] = copy.deepcopy(module).requires_grad_(False).eval().cpu()
+                except:
+                    snapshot_data[name] = module
                 del module  # conserve memory
             snapshot_pkl = os.path.join(run_dir, f"network-snapshot-{cur_nimg//1000:06d}.pkl")
             if rank == 0:
@@ -453,9 +450,9 @@ def training_loop(
                     {
                         "Evaluation/KID": stats_metrics["kid"],
                         "Evaluation/Precision": stats_metrics["precision"],
-                        "Evaluation/Recal": stats_metrics["recall"],
+                        "Evaluation/Recall": stats_metrics["recall"],
                     },
-                    step=int(cur_nimg / batch_size),
+                    step=cur_nimg,
                 )
         del snapshot_data  # conserve memory
 
@@ -471,17 +468,21 @@ def training_loop(
 
         if rank == 0:
             this_nbatch = cur_nimg / batch_size
-            wandb.log(
-                {
-                    "Tick Length": (tick_end_time - tick_start_time) / (this_nbatch - last_nbatch),
-                    "Generator": stats_dict["Loss/G/loss"].mean,
-                    "Discriminator": stats_dict["Loss/D/loss"].mean,
-                    "Real Score": stats_dict["Loss/scores/real"].mean,
-                    "Fake Score": stats_dict["Loss/scores/fake"].mean,
-                    "R1 Penalty": stats_dict["Loss/D/reg"].mean,
-                },
-                step=int(cur_nimg / batch_size),
-            )
+            log_dict = {
+                "Tick Length": (tick_end_time - tick_start_time) / (this_nbatch - last_nbatch),
+                "Generator": stats_dict["Loss/G/loss"].mean,
+                "Discriminator": stats_dict["Loss/D/loss"].mean,
+                "Real Score": stats_dict["Loss/scores/real"].mean,
+                "Fake Score": stats_dict["Loss/scores/fake"].mean,
+                "R1 Penalty": stats_dict["Loss/D/reg"].mean,
+            }
+            if "Pruning/l1" in stats_dict:
+                log_dict["Pruning/L1 Penalty"] = stats_dict["Pruning/l1"].mean
+            if "Pruning/thresh" in stats_dict:
+                log_dict["Pruning/Proximal Threshold"] = stats_dict["Pruning/thresh"].mean
+            if "Pruning/sparsity" in stats_dict:
+                log_dict["Pruning/Average Sparsity"] = stats_dict["Pruning/sparsity"].mean
+            wandb.log(log_dict, step=cur_nimg)
             last_nbatch = this_nbatch
 
         # Update logs.
