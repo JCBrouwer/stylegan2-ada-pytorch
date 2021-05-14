@@ -436,7 +436,7 @@ def training_loop(
             for metric in metrics:
                 result_dict = metric_main.calc_metric(
                     metric=metric,
-                    G=snapshot_data["G_ema"],
+                    G=snapshot_data["G"],
                     dataset_kwargs=training_set_kwargs,
                     num_gpus=num_gpus,
                     rank=rank,
