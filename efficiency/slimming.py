@@ -8,7 +8,7 @@ from .pruning import L1, Proximal
 
 
 class SlimmingLoss(StyleGAN2Loss):
-    def __init__(self, device, G_mapping, G_synthesis, D, pruning="prox", **kwargs):
+    def __init__(self, device, G_mapping, G_synthesis, D, pruning="l1", **kwargs):
         super().__init__(device, G_mapping, G_synthesis, D, **kwargs)
         if pruning == "prox":
             self.pruner = Proximal(self)

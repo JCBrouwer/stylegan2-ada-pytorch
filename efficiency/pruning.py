@@ -30,17 +30,17 @@ class L1(Pruning):
     Based on 'Learning Efficient Convolutional Networks through Network Slimming': https://arxiv.org/abs/1708.06519
     """
 
-    def __init__(self, parent, lambda_l1=0.0001):
+    def __init__(self, parent, lambda_l1=0.0001, conv_only=True):
         self.parent = parent
         self.lambda_l1 = lambda_l1
 
         self.masks = []
         for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
             if "fc" in name or "affine" in name:
-                pass
-                # mod.register_forward_hook(self.forward_hook)
-                # mod.mask = torch.nn.Parameter(torch.ones((1, mod.weight.shape[0]), device=self.parent.device))
-                # self.masks.append(mod.mask)
+                if not conv_only:
+                    mod.register_forward_hook(self.forward_hook)
+                    mod.mask = torch.nn.Parameter(torch.ones((1, mod.weight.shape[0]), device=self.parent.device))
+                    self.masks.append(mod.mask)
             elif "conv" in name:
                 mod.register_forward_hook(self.forward_hook)
                 mod.mask = torch.nn.Parameter(torch.ones((1, mod.weight.shape[0], 1, 1), device=self.parent.device))
@@ -71,17 +71,19 @@ class Proximal(Pruning):
     Based on 'GAN Slimming: All-in-One GAN Compression by A Unified Optimization Framework': https://github.com/VITA-Group/GAN-Slimming
     """
 
-    def __init__(self, parent, rho=0.01, l1_lr=0.1, momentum=0.5, anneal_epochs=20, batches_per_epoch=256):
+    def __init__(
+        self, parent, rho=0.01, l1_lr=0.1, momentum=0.5, anneal_epochs=20, batches_per_epoch=256, conv_only=False
+    ):
         self.parent = parent
         self.rho = rho
 
         self.masks = []
         for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
             if "fc" in name or "affine" in name:
-                pass
-                # mod.mask = torch.ones((1, mod.weight.shape[0]), device=self.parent.device)
-                # self.masks.append(mod.mask)
-                # mod.register_forward_hook(self.forward_hook)
+                if not conv_only:
+                    mod.mask = torch.ones((1, mod.weight.shape[0]), device=self.parent.device)
+                    self.masks.append(mod.mask)
+                    mod.register_forward_hook(self.forward_hook)
             elif "conv" in name:
                 mod.mask = torch.ones((1, mod.weight.shape[0], 1, 1), device=self.parent.device)
                 self.masks.append(mod.mask)

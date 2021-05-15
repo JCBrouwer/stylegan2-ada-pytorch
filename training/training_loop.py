@@ -135,6 +135,27 @@ def training_loop(
     conv2d_gradfix.enabled = True  # Improves training speed.
     grid_sample_gradfix.enabled = True  # Avoids errors with the augmentation pipe.
 
+    if rank == 0:
+        if wb["wbgroup"] is None:
+            wandb.init(
+                # project=wb["wbproj"],
+                project="Compressing StyleGAN",
+                entity="tud-cs4245-group-27",
+                name=wb["wbname"],
+                config=wbconf,
+                settings=wandb.Settings(start_method="thread"),
+            )
+        else:
+            wandb.init(
+                # project=wb["wbproj"],
+                project="Compressing StyleGAN",
+                entity="tud-cs4245-group-27",
+                group=wb["wbgroup"],
+                name=wb["wbname"],
+                config=wbconf,
+                settings=wandb.Settings(start_method="thread"),
+            )
+
     # Load training set
     training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs)  # subclass of training.dataset.Dataset
     training_set_sampler = misc.InfiniteSampler(
@@ -471,11 +492,15 @@ def training_loop(
             log_dict = {
                 "Tick Length": (tick_end_time - tick_start_time) / (this_nbatch - last_nbatch),
                 "Generator": stats_dict["Loss/G/loss"].mean,
-                "Discriminator": stats_dict["Loss/D/loss"].mean,
-                "Real Score": stats_dict["Loss/scores/real"].mean,
-                "Fake Score": stats_dict["Loss/scores/fake"].mean,
-                "R1 Penalty": stats_dict["Loss/D/reg"].mean,
             }
+            if "Loss/D/loss" in stats_dict:
+                log_dict["Discriminator"] = stats_dict["Loss/D/loss"].mean
+            if "Loss/scores/real" in stats_dict:
+                log_dict["Real Score"] = stats_dict["Loss/scores/real"].mean
+            if "Loss/scores/fake" in stats_dict:
+                log_dict["Fake Score"] = stats_dict["Loss/scores/fake"].mean
+            if "Loss/D/reg" in stats_dict:
+                log_dict["R1 Penalty"] = stats_dict["Loss/D/reg"].mean
             if "Pruning/l1" in stats_dict:
                 log_dict["Pruning/L1 Penalty"] = stats_dict["Pruning/l1"].mean
             if "Pruning/thresh" in stats_dict:

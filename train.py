@@ -656,29 +656,16 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     os.makedirs(args.run_dir)
     with open(os.path.join(args.run_dir, "training_options.json"), "wt") as f:
         json.dump(args, f, indent=2)
+    
+
+    args.wb = {
+        "wbproj": config_kwargs["wbproj"],
+        "wbgroup": config_kwargs["wbgroup"],
+        "wbname": config_kwargs["wbname"],
+    }
+    args.wbconf = dict_flatten(args)
 
     torch.multiprocessing.set_start_method("spawn")
-
-    # Launch processes.
-    if config_kwargs["wbgroup"] is None:
-        wandb.init(
-            # project=config_kwargs["wbproj"],
-            project="Compressing StyleGAN",
-            entity="tud-cs4245-group-27",
-            name=config_kwargs["wbname"],
-            config=dict_flatten(args),
-            settings=wandb.Settings(start_method="thread"),
-        )
-    else:
-        wandb.init(
-            # project=config_kwargs["wbproj"],
-            project="Compressing StyleGAN",
-            entity="tud-cs4245-group-27",
-            group=config_kwargs["wbgroup"],
-            name=config_kwargs["wbname"],
-            config=dict_flatten(args),
-            settings=wandb.Settings(start_method="thread"),
-        )
 
     print("Launching processes...")
     with tempfile.TemporaryDirectory() as temp_dir:
