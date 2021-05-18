@@ -9,11 +9,13 @@ from .pruning import L1, Proximal
 
 class SlimmingLoss(StyleGAN2Loss):
     def __init__(self, device, G_mapping, G_synthesis, D, pruning="l1", **kwargs):
+        lambda_l1 = kwargs["lambda_l1"]
+        del kwargs["lambda_l1"]
         super().__init__(device, G_mapping, G_synthesis, D, **kwargs)
         if pruning == "prox":
             self.pruner = Proximal(self)
         elif pruning == "l1":
-            self.pruner = L1(self)
+            self.pruner = L1(self, lambda_l1)
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         assert phase in ["Gmain", "Greg", "Gboth", "Dmain", "Dreg", "Dboth"]

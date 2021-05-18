@@ -79,6 +79,7 @@ def setup_training_loop_kwargs(
     nobench=None,  # Disable cuDNN benchmarking: <bool>, default = False
     workers=None,  # Override number of DataLoader workers: <int>, default = 3
     pruning=None,
+    lambda_l1=None,
     **kwargs,
 ):
     print("Unrecognized arguments:", kwargs)
@@ -239,7 +240,7 @@ def setup_training_loop_kwargs(
     args.G_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
     args.D_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
     args.loss_kwargs = dnnlib.EasyDict(
-        class_name="efficiency.slimming.SlimmingLoss", r1_gamma=spec.gamma, pruning=pruning
+        class_name="efficiency.slimming.SlimmingLoss", r1_gamma=spec.gamma, pruning=pruning, lambda_l1=lambda_l1
     )
 
     args.total_kimg = spec.kimg
@@ -569,6 +570,7 @@ class CommaSeparatedList(click.ParamType):
 
 # Pruning options.
 @click.option("--pruning", help="Pruning strategy to use", type=click.Choice(["prox", "l1"]))
+@click.option("--lambda_l1", help="Strength of L1 penalty", type=float, default=0.001)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -656,7 +658,6 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     os.makedirs(args.run_dir)
     with open(os.path.join(args.run_dir, "training_options.json"), "wt") as f:
         json.dump(args, f, indent=2)
-    
 
     args.wb = {
         "wbproj": config_kwargs["wbproj"],

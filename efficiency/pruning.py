@@ -30,7 +30,7 @@ class L1(Pruning):
     Based on 'Learning Efficient Convolutional Networks through Network Slimming': https://arxiv.org/abs/1708.06519
     """
 
-    def __init__(self, parent, lambda_l1=0.0001, conv_only=True):
+    def __init__(self, parent, lambda_l1=0.005, conv_only=False):
         self.parent = parent
         self.lambda_l1 = lambda_l1
 
@@ -55,9 +55,10 @@ class L1(Pruning):
             l1_penalty += torch.norm(mask, p=1)
         l1_penalty.mul(self.lambda_l1).backward()
 
-        training_stats.report("Pruning/l1", l1_penalty)
         sparsities = [(p <= CLOSE_TO_ZERO).sum().detach().cpu() / p.numel() for p in self.masks]
         print("sparsity", np.mean(sparsities), "\t l1", l1_penalty.item())
+        training_stats.report("Pruning/l1", l1_penalty)
+        training_stats.report("Pruning/sparsity", sparsities)
 
 
 def soft_threshold(w, thresh):
