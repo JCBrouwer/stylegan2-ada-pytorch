@@ -569,7 +569,9 @@ class CommaSeparatedList(click.ParamType):
 @click.option("--wbname", help="W&B run name", type=str, required=True)
 
 # Pruning options.
-@click.option("--pruning", help="Pruning strategy to use", type=click.Choice(["prox", "l1"]))
+@click.option(
+    "--pruning", help="Pruning strategy to use", type=click.Choice(["prox", "l1-in-out", "l1-out", "l1-in", "mask"])
+)
 @click.option("--lambda_l1", help="Strength of L1 penalty", type=float, default=0.001)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper

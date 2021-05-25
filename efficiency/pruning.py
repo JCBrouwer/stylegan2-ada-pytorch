@@ -10,7 +10,7 @@ CLOSE_TO_ZERO = 1e-3
 class Pruning:
     @abstractmethod
     def forward_hook(mod, inputs, outputs):
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def before_minibatch(self):
@@ -25,7 +25,37 @@ class Pruning:
         pass
 
 
-class L1(Pruning):
+class L1Weight(Pruning):
+    """
+    L1-out penalty as described in 'Content-Aware GAN Compression': https://arxiv.org/abs/2104.02244
+    """
+
+    def __init__(self, parent, lambda_l1=0.005, dims=(0, 1)):
+        self.parent = parent
+        self.lambda_l1 = lambda_l1
+        self.dims = dims
+        self.weights = []
+        for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
+            if "fc" in name or "affine" in name:
+                self.weights.append(mod.weight)
+                print(name, mod.weight.shape)
+            elif "conv" in name:
+                self.weights.append(mod.weight)
+                print(name, mod.weight.shape)
+
+    def after_minibatch(self):
+        l1_penalty = 0
+        for weight in self.weights:
+            l1_penalty += torch.norm(weight, p=1, dim=self.dims).sum()
+        l1_penalty.mul(self.lambda_l1).backward()
+
+        sparsities = [(abs(p) <= CLOSE_TO_ZERO).sum().detach().cpu() / p.numel() for p in self.weights]
+        print("sparsity", np.mean(sparsities), "\t l1", l1_penalty.item())
+        training_stats.report("Pruning/l1", l1_penalty)
+        training_stats.report("Pruning/sparsity", sparsities)
+
+
+class L1Mask(Pruning):
     """
     Based on 'Learning Efficient Convolutional Networks through Network Slimming': https://arxiv.org/abs/1708.06519
     """
