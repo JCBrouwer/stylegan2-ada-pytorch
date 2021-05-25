@@ -1,92 +1,52 @@
+import os
 from abc import abstractmethod
+from pathlib import Path
 
 import numpy as np
 import torch
-from torch_utils import training_stats
-
-import os 
-import torch.utils.data as TD
 from skimage import io, transform
-# from PIL import Image
-
-import torchvision.transforms.functional as TF
-import torch.utils.data.Dataset as Dataset
+from torch_utils import training_stats, misc
+from training.dataset import ImageFolderDataset
 
 CLOSE_TO_ZERO = 1e-3
 
 
-class DistillationDataset(Dataset):   
-    
-    def __init__(self, directory):
-        self.directory = directory
-        self.image_ids = os.listdir(directory)
-    
-    def __len__(self):
-        return len(self.image_ids)
-        
-    def __getitem__(self, index):
-        if type(index) == int or type(index) == float:
-            index = int(index)
-            if len(str(index)) < 4: #Append zeros before seed
-                seednew = ''
-                for i in range(4-len(str(index))):
-                    seednew += '0'
-                seednew += str(index)
-                index = seednew
-            elif len(str(index)) > 4: #Only 4 digit seeds
-                return False 
-        index = 'seed' + str(index)
+class DistillationDataset(ImageFolderDataset):
+    def __getitem__(self, idx):
+        raw_idx = self._raw_idx[idx]
+        image = self._load_raw_image(raw_idx)
+        seed = Path(self._image_fnames[raw_idx]).stem
+        return image.copy(), int(seed)
 
-        path = os.path.join(self.directory, index)
-        image = io.imread(path)
-        
-        return image
-    
-    
+
 class Distillation:
-    
-    # @abstractmethod
-    # def forward_hook(mod, inputs, outputs):
-    #     raise NotImplementedError
-
-    # @abstractmethod
-    # def before_minibatch(self):
-    #     pass
-
-    # @abstractmethod
-    # def after_minibatch(self):
-    #     pass
+    @abstractmethod
+    def get_latents(self):
+        pass
 
     @abstractmethod
-    def before_backward(self):
+    def loss_backward(self):
         pass
-   
-    
-class RMSE(Distillation):
-    
-    def __init__(self):
-        self.dataset = DistillationDataset(directory = 'C:/Users/Levi/Desktop/CS4245/stylegan2-ada-pytorch/out/')
-        return
 
-    def set_seed(seed):
-        # random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
 
-    def before_backward(self, real_img, gen_img, seed):
-        self.set_seed(seed)
-        self.dataset.__getitem__(seed)
-        
-        RMSE = 0
-        
+class Basic(Distillation):
+    def __init__(self, parent, path, batch_size):
+        self.parent = parent
+        self.z_dim = parent.G_mapping.z_dim
+        dataset = DistillationDataset(path)
+        sampler = misc.InfiniteSampler(dataset)
+        self.dataloader = iter(torch.utils.data.DataLoader(dataset=dataset, sampler=sampler, batch_size=batch_size))
 
-    """
-    TD.DataLoader()
-    """
+    def get_latents(self):
+        self.teacher_imgs, seeds = next(self.dataloader)
+        self.teacher_imgs = self.teacher_imgs.to(self.parent.device, non_blocking=True).to(torch.float32) / 127.5 - 1
+        latents = torch.tensor([np.random.RandomState(seed).randn(self.z_dim) for seed in seeds])
+        return latents.float()
+
+    def loss_backward(self, student_imgs):
+        loss = torch.nn.functional.l1_loss(self.teacher_imgs, student_imgs)
+        training_stats.report("Distillation/loss", loss)
+        loss.backward()
 
 
 class Advanced(Distillation):

@@ -491,8 +491,9 @@ def training_loop(
             this_nbatch = cur_nimg / batch_size
             log_dict = {
                 "Tick Length": (tick_end_time - tick_start_time) / (this_nbatch - last_nbatch),
-                "Generator": stats_dict["Loss/G/loss"].mean,
             }
+            if "Loss/D/loss" in stats_dict:
+                log_dict["Generator"] = stats_dict["Loss/G/loss"].mean
             if "Loss/D/loss" in stats_dict:
                 log_dict["Discriminator"] = stats_dict["Loss/D/loss"].mean
             if "Loss/scores/real" in stats_dict:
@@ -507,6 +508,8 @@ def training_loop(
                 log_dict["Pruning/Proximal Threshold"] = stats_dict["Pruning/thresh"].mean
             if "Pruning/sparsity" in stats_dict:
                 log_dict["Pruning/Average Sparsity"] = stats_dict["Pruning/sparsity"].mean
+            if "Distillation/loss" in stats_dict:
+                log_dict["Distillation/Loss"] = stats_dict["Distillation/loss"].mean
             wandb.log(log_dict, step=cur_nimg)
             last_nbatch = this_nbatch
 

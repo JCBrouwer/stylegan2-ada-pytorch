@@ -4,15 +4,27 @@ from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
 from training.loss import StyleGAN2Loss
 
-from .distillation import RMSE
+from .distillation import *
 from .pruning import *
 
 
 class SlimmingLoss(StyleGAN2Loss):
-    def __init__(self, device, G_mapping, G_synthesis, D, pruning="l1-out", **kwargs):
+    def __init__(
+        self,
+        device,
+        G_mapping,
+        G_synthesis,
+        D,
+        batch_size,
+        pruning="l1-out",
+        distill="basic",
+        teacher_path="",
+        **kwargs
+    ):
         lambda_l1 = kwargs["lambda_l1"]
         del kwargs["lambda_l1"]
         super().__init__(device, G_mapping, G_synthesis, D, **kwargs)
+
         if pruning == "prox":
             self.pruner = Proximal(self)
         elif pruning == "mask":
@@ -21,6 +33,10 @@ class SlimmingLoss(StyleGAN2Loss):
             # in -> 1, out -> 0, in-out -> (0, 1)
             dims = ((0, 1) if "in" in pruning else 0) if "out" in pruning else 1
             self.pruner = L1Weight(self, lambda_l1, dims=dims)
+
+        if distill == "basic":
+            assert teacher_path != "", "Must specify --teacher-path when distilling!"
+            self.distiller = Basic(self, teacher_path, batch_size)
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         assert phase in ["Gmain", "Greg", "Gboth", "Dmain", "Dreg", "Dboth"]
@@ -34,30 +50,23 @@ class SlimmingLoss(StyleGAN2Loss):
         #
 
         if do_Gmain:
+            gen_z = self.distiller.get_latents().to(self.device)
             self.pruner.before_minibatch()
-            gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl))  # May get synced by Gpl.
-            gen_logits = self.run_D(gen_img, gen_c, sync=False)
-            training_stats.report("Loss/scores/fake", gen_logits)
-            training_stats.report("Loss/signs/fake", gen_logits.sign())
-            loss_Gmain = torch.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
-            training_stats.report("Loss/G/loss", loss_Gmain)
-            loss = loss_Gmain.mean().mul(gain)
-            self.pruner.before_backward()
-            loss.backward()
-            
-            loss_Distillation = 0
-            loss = loss_Distillation.mean().mul(gain)
-            self.pruner.before_backward()
-            loss.backward()
-            # loss_Total = loss_Gmain + loss_Distillation
-            
+            gen_img, _ = self.run_G(gen_z, None, sync=False)  # May get synced by Gpl.
+            self.pruner.after_minibatch()
+            self.distiller.loss_backward(gen_img)
+
+            # gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl))  # May get synced by Gpl.
+            # gen_logits = self.run_D(gen_img, gen_c, sync=False)
+            # training_stats.report("Loss/scores/fake", gen_logits)
+            # training_stats.report("Loss/signs/fake", gen_logits.sign())
+            # loss_Gmain = torch.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
+            # training_stats.report("Loss/G/loss", loss_Gmain)
             # loss = loss_Gmain.mean().mul(gain)
             # self.pruner.before_backward()
             # loss.backward()
-            
-            #een variabele toevoegen om het een gewogen gemiddelde te maken ipv 50/50
-            """ Schrijven dataset, toevoegen loss functie, aanhalen image bij seed/naam, Toevoegen in training_loop/logdict """
-            self.pruner.after_minibatch()
+
+        return  # only use pruning and distillation for now
 
         # Path length regularization
         if do_Gpl:

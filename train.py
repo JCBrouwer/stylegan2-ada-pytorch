@@ -80,6 +80,8 @@ def setup_training_loop_kwargs(
     workers=None,  # Override number of DataLoader workers: <int>, default = 3
     pruning=None,
     lambda_l1=None,
+    distill=None,
+    teacher_path=None,
     **kwargs,
 ):
     print("Unrecognized arguments:", kwargs)
@@ -237,17 +239,23 @@ def setup_training_loop_kwargs(
     ) = 256  # clamp activations to avoid float16 overflow
     args.D_kwargs.epilogue_kwargs.mbstd_group_size = spec.mbstd
 
-    args.G_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
-    args.D_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
-    args.loss_kwargs = dnnlib.EasyDict(
-        class_name="efficiency.slimming.SlimmingLoss", r1_gamma=spec.gamma, pruning=pruning, lambda_l1=lambda_l1
-    )
-
     args.total_kimg = spec.kimg
     args.batch_gpu = 8
     args.batch_size = gpus * args.batch_gpu
     args.ema_kimg = spec.ema
     args.ema_rampup = spec.ramp
+
+    args.G_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
+    args.D_opt_kwargs = dnnlib.EasyDict(class_name="torch.optim.Adam", lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
+    args.loss_kwargs = dnnlib.EasyDict(
+        class_name="efficiency.slimming.SlimmingLoss",
+        r1_gamma=spec.gamma,
+        pruning=pruning,
+        lambda_l1=lambda_l1,
+        distill=distill,
+        teacher_path=teacher_path,
+        batch_size=args.batch_gpu,
+    )
 
     if cfg == "cifar" or "wav" in cfg:
         args.loss_kwargs.pl_weight = 0  # disable path length regularization
@@ -573,6 +581,12 @@ class CommaSeparatedList(click.ParamType):
     "--pruning", help="Pruning strategy to use", type=click.Choice(["prox", "l1-in-out", "l1-out", "l1-in", "mask"])
 )
 @click.option("--lambda_l1", help="Strength of L1 penalty", type=float, default=0.001)
+
+# Distillation options.
+@click.option("--distill", help="Distillation strategy to use", type=click.Choice(["basic"]))
+@click.option(
+    "--teacher-path", help="Path to folder or zip with samples from fully-trained teacher Generator", metavar="PATH",
+)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
