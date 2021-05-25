@@ -4,6 +4,7 @@ from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
 from training.loss import StyleGAN2Loss
 
+from .distillation import RMSE
 from .pruning import *
 
 
@@ -43,6 +44,19 @@ class SlimmingLoss(StyleGAN2Loss):
             loss = loss_Gmain.mean().mul(gain)
             self.pruner.before_backward()
             loss.backward()
+            
+            loss_Distillation = 0
+            loss = loss_Distillation.mean().mul(gain)
+            self.pruner.before_backward()
+            loss.backward()
+            # loss_Total = loss_Gmain + loss_Distillation
+            
+            # loss = loss_Gmain.mean().mul(gain)
+            # self.pruner.before_backward()
+            # loss.backward()
+            
+            #een variabele toevoegen om het een gewogen gemiddelde te maken ipv 50/50
+            """ Schrijven dataset, toevoegen loss functie, aanhalen image bij seed/naam, Toevoegen in training_loop/logdict """
             self.pruner.after_minibatch()
 
         # Path length regularization
