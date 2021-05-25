@@ -16,13 +16,13 @@ class SlimmingLoss(StyleGAN2Loss):
         G_synthesis,
         D,
         batch_size,
+        lambda_l1=0.0001,
         pruning="l1-out",
         distill="basic",
         teacher_path="",
+        lpips_net="alex",
         **kwargs
     ):
-        lambda_l1 = kwargs["lambda_l1"]
-        del kwargs["lambda_l1"]
         super().__init__(device, G_mapping, G_synthesis, D, **kwargs)
 
         if pruning == "prox":
@@ -35,8 +35,9 @@ class SlimmingLoss(StyleGAN2Loss):
             self.pruner = L1Weight(self, lambda_l1, dims=dims)
 
         if distill == "basic":
-            assert teacher_path != "", "Must specify --teacher-path when distilling!"
             self.distiller = Basic(self, teacher_path, batch_size)
+        elif distill == "lpips":
+            self.distiller = LPIPS(self, teacher_path, batch_size, lpips_net=lpips_net)
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         assert phase in ["Gmain", "Greg", "Gboth", "Dmain", "Dreg", "Dboth"]

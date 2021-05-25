@@ -51,7 +51,7 @@ class L1Weight(Pruning):
 
         sparsities = [(abs(p) <= CLOSE_TO_ZERO).sum().detach().cpu() / p.numel() for p in self.weights]
         print("sparsity", np.mean(sparsities), "\t l1", l1_penalty.item())
-        training_stats.report("Pruning/l1", l1_penalty)
+        training_stats.report("Pruning/l1", self.lambda_l1 * l1_penalty)
         training_stats.report("Pruning/sparsity", sparsities)
 
 
