@@ -88,12 +88,12 @@ def conv2d_resample(x, w, f=None, up=1, down=1, padding=0, groups=1, flip_weight
         Tensor of the shape `[batch_size, num_channels, out_height, out_width]`.
     """
     # Validate arguments.
-    assert isinstance(x, torch.Tensor) and (x.ndim == 4)
-    assert isinstance(w, torch.Tensor) and (w.ndim == 4) and (w.dtype == x.dtype)
-    assert f is None or (isinstance(f, torch.Tensor) and f.ndim in [1, 2] and f.dtype == torch.float32)
-    assert isinstance(up, int) and (up >= 1)
-    assert isinstance(down, int) and (down >= 1)
-    assert isinstance(groups, int) and (groups >= 1)
+    # assert isinstance(x, torch.Tensor) and (x.ndim == 4)
+    # assert isinstance(w, torch.Tensor) and (w.ndim == 4) and (w.dtype == x.dtype)
+    # assert f is None or (isinstance(f, torch.Tensor) and f.ndim in [1, 2] and f.dtype == torch.float32)
+    # assert isinstance(up, int) and (up >= 1)
+    # assert isinstance(down, int) and (down >= 1)
+    # assert isinstance(groups, int) and (groups >= 1)
     out_channels, in_channels_per_group, kh, kw = _get_weight_shape(w)
     fw, fh = _get_filter_size(f)
     px0, px1, py0, py1 = _parse_padding(padding)

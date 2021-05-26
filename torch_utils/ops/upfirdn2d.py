@@ -43,18 +43,18 @@ def _init():
 def _parse_scaling(scaling):
     if isinstance(scaling, int):
         scaling = [scaling, scaling]
-    assert isinstance(scaling, (list, tuple))
-    assert all(isinstance(x, int) for x in scaling)
+    # assert isinstance(scaling, (list, tuple))
+    # assert all(isinstance(x, int) for x in scaling)
     sx, sy = scaling
-    assert sx >= 1 and sy >= 1
+    # assert sx >= 1 and sy >= 1
     return sx, sy
 
 
 def _parse_padding(padding):
     if isinstance(padding, int):
         padding = [padding, padding]
-    assert isinstance(padding, (list, tuple))
-    assert all(isinstance(x, int) for x in padding)
+    # assert isinstance(padding, (list, tuple))
+    # assert all(isinstance(x, int) for x in padding)
     if len(padding) == 2:
         padx, pady = padding
         padding = [padx, padx, pady, pady]
@@ -65,14 +65,14 @@ def _parse_padding(padding):
 def _get_filter_size(f):
     if f is None:
         return 1, 1
-    assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
+    # assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
     fw = f.shape[-1]
     fh = f.shape[0]
     with misc.suppress_tracer_warnings():
         fw = int(fw)
         fh = int(fh)
     # misc.assert_shape(f, [fh, fw][: f.ndim])
-    assert fw >= 1 and fh >= 1
+    # assert fw >= 1 and fh >= 1
     return fw, fh
 
 
@@ -104,8 +104,8 @@ def setup_filter(f, device=torch.device("cpu"), normalize=True, flip_filter=Fals
     if f is None:
         f = 1
     f = torch.as_tensor(f, dtype=torch.float32)
-    assert f.ndim in [0, 1, 2]
-    assert f.numel() > 0
+    # assert f.ndim in [0, 1, 2]
+    # assert f.numel() > 0
     if f.ndim == 0:
         f = f[np.newaxis]
 
@@ -114,7 +114,7 @@ def setup_filter(f, device=torch.device("cpu"), normalize=True, flip_filter=Fals
         separable = f.ndim == 1 and f.numel() >= 8
     if f.ndim == 1 and not separable:
         f = f.ger(f)
-    assert f.ndim == (1 if separable else 2)
+    # assert f.ndim == (1 if separable else 2)
 
     # Apply normalize, flip, gain, and device.
     if normalize:
@@ -169,8 +169,8 @@ def upfirdn2d(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1, impl="re
     Returns:
         Tensor of the shape `[batch_size, num_channels, out_height, out_width]`.
     """
-    assert isinstance(x, torch.Tensor)
-    assert impl in ["ref", "cuda"]
+    # assert isinstance(x, torch.Tensor)
+    # assert impl in ["ref", "cuda"]
     if impl == "cuda" and x.device.type == "cuda" and _init():
         return _upfirdn2d_cuda(up=up, down=down, padding=padding, flip_filter=flip_filter, gain=gain).apply(x, f)
     return _upfirdn2d_ref(x, f, up=up, down=down, padding=padding, flip_filter=flip_filter, gain=gain)
@@ -184,11 +184,11 @@ def _upfirdn2d_ref(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1):
     """Slow reference implementation of `upfirdn2d()` using standard PyTorch ops.
     """
     # Validate arguments.
-    assert isinstance(x, torch.Tensor) and x.ndim == 4
+    # assert isinstance(x, torch.Tensor) and x.ndim == 4
     if f is None:
         f = torch.ones([1, 1], dtype=torch.float32, device=x.device)
-    assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
-    assert f.dtype == torch.float32 and not f.requires_grad
+    # assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
+    # assert f.dtype == torch.float32 and not f.requires_grad
     batch_size, num_channels, in_height, in_width = x.shape
     upx, upy = _parse_scaling(up)
     downx, downy = _parse_scaling(down)
@@ -244,10 +244,10 @@ def _upfirdn2d_cuda(up=1, down=1, padding=0, flip_filter=False, gain=1):
     class Upfirdn2dCuda(torch.autograd.Function):
         @staticmethod
         def forward(ctx, x, f):  # pylint: disable=arguments-differ
-            assert isinstance(x, torch.Tensor) and x.ndim == 4
+            # assert isinstance(x, torch.Tensor) and x.ndim == 4
             if f is None:
                 f = torch.ones([1, 1], dtype=torch.float32, device=x.device)
-            assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
+            # assert isinstance(f, torch.Tensor) and f.ndim in [1, 2]
             y = x
             if f.ndim == 2:
                 y = _plugin.upfirdn2d(y, f, upx, upy, downx, downy, padx0, padx1, pady0, pady1, flip_filter, gain)
@@ -280,7 +280,7 @@ def _upfirdn2d_cuda(up=1, down=1, padding=0, flip_filter=False, gain=1):
             if ctx.needs_input_grad[0]:
                 dx = _upfirdn2d_cuda(up=down, down=up, padding=p, flip_filter=(not flip_filter), gain=gain).apply(dy, f)
 
-            assert not ctx.needs_input_grad[1]
+            # assert not ctx.needs_input_grad[1]
             return dx, df
 
     # Add to cache.

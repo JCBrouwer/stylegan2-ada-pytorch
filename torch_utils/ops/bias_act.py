@@ -124,8 +124,8 @@ def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, 
     Returns:
         Tensor of the same shape and datatype as `x`.
     """
-    assert isinstance(x, torch.Tensor)
-    assert impl in ["ref", "cuda"]
+    # assert isinstance(x, torch.Tensor)
+    # assert impl in ["ref", "cuda"]
     if impl == "cuda" and x.device.type == "cuda" and _init():
         return _bias_act_cuda(dim=dim, act=act, alpha=alpha, gain=gain, clamp=clamp).apply(x, b)
     return _bias_act_ref(x=x, b=b, dim=dim, act=act, alpha=alpha, gain=gain, clamp=clamp)
@@ -138,8 +138,8 @@ def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, 
 def _bias_act_ref(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None):
     """Slow reference implementation of `bias_act()` using standard TensorFlow ops.
     """
-    assert isinstance(x, torch.Tensor)
-    assert clamp is None or clamp >= 0
+    # assert isinstance(x, torch.Tensor)
+    # assert clamp is None or clamp >= 0
     spec = activation_funcs[act]
     alpha = float(alpha if alpha is not None else spec.def_alpha)
     gain = float(gain if gain is not None else spec.def_gain)
@@ -147,9 +147,9 @@ def _bias_act_ref(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=N
 
     # Add bias.
     if b is not None:
-        assert isinstance(b, torch.Tensor) and b.ndim == 1
-        assert 0 <= dim < x.ndim
-        assert b.shape[0] == x.shape[dim]
+        # assert isinstance(b, torch.Tensor) and b.ndim == 1
+        # assert 0 <= dim < x.ndim
+        # assert b.shape[0] == x.shape[dim]
         x = x + b.reshape([-1 if i == dim else 1 for i in range(x.ndim)])
 
     # Evaluate activation function.
@@ -176,7 +176,7 @@ def _bias_act_cuda(dim=1, act="linear", alpha=None, gain=None, clamp=None):
     """Fast CUDA implementation of `bias_act()` using custom ops.
     """
     # Parse arguments.
-    assert clamp is None or clamp >= 0
+    # assert clamp is None or clamp >= 0
     spec = activation_funcs[act]
     alpha = float(alpha if alpha is not None else spec.def_alpha)
     gain = float(gain if gain is not None else spec.def_gain)

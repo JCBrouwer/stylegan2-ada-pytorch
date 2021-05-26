@@ -78,7 +78,7 @@ def conv_transpose2d(input, weight, bias=None, stride=1, padding=0, output_paddi
 
 
 def _should_use_custom_op(input):
-    assert isinstance(input, torch.Tensor)
+    # assert isinstance(input, torch.Tensor)
     if (not enabled) or (not torch.backends.cudnn.enabled):
         return False
     if input.device.type != "cuda":
@@ -93,8 +93,8 @@ def _should_use_custom_op(input):
 
 def _tuple_of_ints(xs, ndim):
     xs = tuple(xs) if isinstance(xs, (tuple, list)) else (xs,) * ndim
-    assert len(xs) == ndim
-    assert all(isinstance(x, int) for x in xs)
+    # assert len(xs) == ndim
+    # assert all(isinstance(x, int) for x in xs)
     return xs
 
 
@@ -118,15 +118,15 @@ def _conv2d_gradfix(transpose, weight_shape, stride, padding, output_padding, di
         return _conv2d_gradfix_cache[key]
 
     # Validate arguments.
-    assert groups >= 1
-    assert len(weight_shape) == ndim + 2
-    assert all(stride[i] >= 1 for i in range(ndim))
-    assert all(padding[i] >= 0 for i in range(ndim))
-    assert all(dilation[i] >= 0 for i in range(ndim))
-    if not transpose:
-        assert all(output_padding[i] == 0 for i in range(ndim))
-    else:  # transpose
-        assert all(0 <= output_padding[i] < max(stride[i], dilation[i]) for i in range(ndim))
+    # assert groups >= 1
+    # assert len(weight_shape) == ndim + 2
+    # assert all(stride[i] >= 1 for i in range(ndim))
+    # assert all(padding[i] >= 0 for i in range(ndim))
+    # assert all(dilation[i] >= 0 for i in range(ndim))
+    # if not transpose:
+    #     assert all(output_padding[i] == 0 for i in range(ndim))
+    # else:  # transpose
+    #     assert all(0 <= output_padding[i] < max(stride[i], dilation[i]) for i in range(ndim))
 
     # Helpers.
     common_kwargs = dict(stride=stride, padding=padding, dilation=dilation, groups=groups)
@@ -146,7 +146,7 @@ def _conv2d_gradfix(transpose, weight_shape, stride, padding, output_padding, di
     class Conv2d(torch.autograd.Function):
         @staticmethod
         def forward(ctx, input, weight, bias):
-            assert weight.shape == weight_shape
+            # assert weight.shape == weight_shape
             if not transpose:
                 output = torch.nn.functional.conv2d(input=input, weight=weight, bias=bias, **common_kwargs)
             else:  # transpose
@@ -168,11 +168,11 @@ def _conv2d_gradfix(transpose, weight_shape, stride, padding, output_padding, di
                 grad_input = _conv2d_gradfix(
                     transpose=(not transpose), weight_shape=weight_shape, output_padding=p, **common_kwargs
                 ).apply(grad_output, weight, None)
-                assert grad_input.shape == input.shape
+                # assert grad_input.shape == input.shape
 
             if ctx.needs_input_grad[1] and not weight_gradients_disabled:
                 grad_weight = Conv2dGradWeight.apply(grad_output, input)
-                assert grad_weight.shape == weight_shape
+                # assert grad_weight.shape == weight_shape
 
             if ctx.needs_input_grad[2]:
                 grad_bias = grad_output.sum([0, 2, 3])
@@ -194,7 +194,7 @@ def _conv2d_gradfix(transpose, weight_shape, stride, padding, output_padding, di
                 torch.backends.cudnn.allow_tf32,
             ]
             grad_weight = op(weight_shape, grad_output, input, padding, stride, dilation, groups, *flags)
-            assert grad_weight.shape == weight_shape
+            # assert grad_weight.shape == weight_shape
             ctx.save_for_backward(grad_output, input)
             return grad_weight
 
@@ -206,14 +206,14 @@ def _conv2d_gradfix(transpose, weight_shape, stride, padding, output_padding, di
 
             if ctx.needs_input_grad[0]:
                 grad2_grad_output = Conv2d.apply(input, grad2_grad_weight, None)
-                assert grad2_grad_output.shape == grad_output.shape
+                # assert grad2_grad_output.shape == grad_output.shape
 
             if ctx.needs_input_grad[1]:
                 p = calc_output_padding(input_shape=input.shape, output_shape=grad_output.shape)
                 grad2_input = _conv2d_gradfix(
                     transpose=(not transpose), weight_shape=weight_shape, output_padding=p, **common_kwargs
                 ).apply(grad_output, grad2_grad_weight, None)
-                assert grad2_input.shape == input.shape
+                # assert grad2_input.shape == input.shape
 
             return grad2_grad_output, grad2_input
 
