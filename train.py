@@ -84,6 +84,10 @@ def setup_training_loop_kwargs(
     teacher_path=None,
     lpips_net=None,
     quantization=None,
+    input_signed=None,
+    nbits=None,
+    input_max=None,
+    quantize_mapping=None,
     **kwargs,
 ):
     print("Unrecognized arguments:", kwargs)
@@ -259,6 +263,10 @@ def setup_training_loop_kwargs(
         batch_size=args.batch_gpu,
         lpips_net=lpips_net,
         quantization=quantization,
+        input_signed=input_signed,
+        nbits=nbits,
+        input_max=input_max,
+        quantize_mapping=quantize_mapping,
     )
 
     if cfg == "cifar" or "wav" in cfg:
@@ -591,12 +599,20 @@ class CommaSeparatedList(click.ParamType):
 # Distillation options.
 @click.option("--distill", help="Distillation strategy to use", type=click.Choice(["basic", "lpips", "none"]))
 @click.option(
-    "--teacher-path", help="Path to folder or zip with samples from fully-trained teacher Generator", metavar="PATH",
+    "--teacher-path", help="Path to folder or zip with samples from fully-trained teacher Generator", metavar="PATH"
 )
 @click.option("--lpips-net", help="Network to use for LPIPS perceptual loss", type=click.Choice(["alex", "vgg"]))
 
 # Quantization options.
-@click.option("--quantization", help="Quantization strategy to use", type=click.Choice(["linear", "none"]))
+@click.option("--quantization", help="Quantization strategy to use", type=click.Choice(["linear", "qgan", "none"]))
+@click.option("--input-signed", help="Whether to quantize to signed integers", type=bool, metavar="BOOL", default=False)
+@click.option("--nbits", help="Number of bits to quantize to", type=int, metavar="INT", default=8)
+@click.option(
+    "--input-max", help="Maximum allowed value for activation before quantization", type=int, metavar="INT", default=4
+)
+@click.option(
+    "--quantize-mapping", help="Disable quantization of mapping network", type=bool, metavar="BOOL", default=True
+)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".

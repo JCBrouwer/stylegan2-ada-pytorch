@@ -3,11 +3,14 @@ from abc import abstractmethod
 
 import torch
 
-_NBITS = 8
-_ACTMAX = 4.0
+
+class Quantization:
+    @abstractmethod
+    def forward_pre_hook(self, module, input):
+        pass
 
 
-class LinQuantSteOp(torch.autograd.Function):
+class QuantizeLinear(torch.autograd.Function):
     """
     from https://github.com/VITA-Group/GAN-Slimming/blob/master/models/models.py
     """
@@ -32,44 +35,101 @@ class LinQuantSteOp(torch.autograd.Function):
         return grad_output, None, None, None
 
 
-quantize = LinQuantSteOp.apply
-
-
-class Quantization:
-    @abstractmethod
-    def forward_pre_hook(self, module, input):
-        pass
-
-
 class Linear(Quantization):
-    def __init__(self, parent, input_quant, input_signed):
+    def __init__(self, parent, input_signed=False, quantize_mapping=False, nbits=8, input_max=4):
         self.parent = parent
-        self.input_quant = input_quant
         self.input_signed = input_signed
-
-        self.nbits = _NBITS
-        self.input_max = _ACTMAX
+        self.nbits = nbits
+        self.input_max = input_max
 
         print("\nQuantizing layers")
         for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
-            if "fc" in name or "affine" in name or "conv" in name:
+            if (quantize_mapping and "fc" in name) or "affine" in name or "conv" in name:
                 mod.register_forward_pre_hook(self.forward_pre_hook)
                 print(name, mod.weight.shape)
         print()
 
     def forward_pre_hook(self, module, input):
-        if hasattr(module, "weight"):
-            module.weight.data = quantize(module.weight, True, self.nbits, module.weight.abs().max().item())
+        module.weight.data = QuantizeLinear.apply(module.weight, True, self.nbits, module.weight.abs().max().item())
+        module.bias.data = QuantizeLinear.apply(module.bias, True, self.nbits, module.bias.abs().max().item())
 
-        if self.input_quant:
-            output = []
-            for i in range(len(input)):
-                max_val = self.input_max
-                min_val = -max_val if self.input_signed else 0.0
-                output.append(
-                    quantize(input[i].clamp(min=min_val, max=max_val), self.input_signed, self.nbits, max_val)
-                )
-            return tuple(output)
+        output = []
+        for i in range(len(input)):
+            max_val = self.input_max
+            min_val = -max_val if self.input_signed else 0.0
+            output.append(
+                QuantizeLinear.apply(input[i].clamp(min=min_val, max=max_val), self.input_signed, self.nbits, max_val)
+            )
+        return tuple(output)
+
+
+class QuantizeQGAN(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, alpha, beta):
+        return input.sub(beta).div_(alpha).round_()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output, None, None, None
+
+
+class QGAN(Quantization):
+    def __init__(self, parent, input_signed=True, quantize_mapping=True, nbits=8, input_max=4):
+        self.parent = parent
+        self.input_signed = input_signed
+        self.nbits = nbits
+        self.input_max = input_max
+
+        print("\nQuantizing layers")
+        for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
+            if (quantize_mapping and "fc" in name) or "affine" in name or "conv" in name:
+                self.prepare_qgan(mod, "weight")
+                self.prepare_qgan(mod, "bias")
+                mod.register_forward_pre_hook(self.forward_pre_hook)
+                print(name, mod.weight.shape)
+        print()
+
+    def prepare_qgan(self, module, param_name):
+        # keep the unquantized weights as a nn.Parameter for backprop
+        setattr(module, f"unquant_{param_name}", copy.deepcopy(getattr(module, param_name)))
+        # delete the original weight nn.Parameter
+        delattr(module, param_name)
+        # keep the quantized version in the original attribute as a tensor (this is used for forward pass)
+        setattr(module, param_name, torch.tensor(getattr(module, f"unquant_{param_name}").data))
+
+        # create scaling parameters to be optimized with EM
+        setattr(module, f"alpha_{param_name}", torch.ones([], device=self.parent.device))
+        setattr(module, f"beta_{param_name}", torch.zeros([], device=self.parent.device))
+
+    def forward_pre_hook(self, module, input):
+        module.weight.data = self.quantize_parameters(module, "weight")
+        module.bias.data = self.quantize_parameters(module, "bias")
+        # output = []
+        # for i in range(len(input)):
+        #     max_val = self.input_max
+        #     min_val = -max_val if self.input_signed else 0.0
+        #     output.append(
+        #         QuantizeLinear.apply(input[i].clamp(min=min_val, max=max_val), self.input_signed, self.nbits, max_val)
+        #     )
+        # return tuple(output)
+
+    def quantize_parameters(self, module, param_name):
+        # maximization
+        w = getattr(module, f"unquant_{param_name}")
+        z = getattr(module, param_name)
+        a = (torch.mean(w * z) - torch.mean(w) * torch.mean(z)) / (torch.mean(z * z) - torch.mean(z).square())
+        b = torch.mean(w) - a * torch.mean(z)
+
+        # update modules stored values
+        getattr(module, f"alpha_{param_name}").data = a
+        getattr(module, f"beta_{param_name}").data = b
+
+        # print(module, param_name)
+        # print(w)
+        # print(z)
+        # print(getattr(module, f"alpha_{param_name}").item(), getattr(module, f"beta_{param_name}").item())
+
+        return QuantizeQGAN.apply(w, a, b)  # expectation
 
 
 # automatic torch.quantization stuff doesn't seem to work in our case :/

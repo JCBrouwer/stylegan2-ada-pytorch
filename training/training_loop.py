@@ -7,6 +7,7 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import copy
+from efficiency.slimming import SlimmingLoss
 import json
 import os
 import cloudpickle as pickle  # pruning relies on local functions which regular pickle can't deal with
@@ -125,6 +126,7 @@ def training_loop(
     wb=None,
     wbconf=None,
 ):
+    compressing = loss_kwargs["class_name"] == "efficiency.slimming.SlimmingLoss"
 
     # Initialize.
     start_time = time.time()
@@ -185,14 +187,18 @@ def training_loop(
     D = (
         dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device)
     )  # subclass of torch.nn.Module
-    G_ema = copy.deepcopy(G).eval()
+    if not compressing:
+        G_ema = copy.deepcopy(G).eval()
 
     # Resume from existing pickle.
     if (resume_pkl is not None) and (rank == 0):
         print(f'Resuming from "{resume_pkl}"')
         with dnnlib.util.open_url(resume_pkl) as f:
             resume_data = legacy.load_network_pkl(f)
-        for name, module in [("G", G), ("D", D), ("G_ema", G_ema)]:
+        modules = [("G", G), ("D", D)]
+        if not compressing:
+            modules += [("G_ema", G_ema)]
+        for name, module in modules:
             misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
 
     # Print network summary tables.
@@ -219,13 +225,10 @@ def training_loop(
     if rank == 0:
         print(f"Distributing across {num_gpus} GPUs...")
     ddp_modules = dict()
-    for name, module in [
-        ("G_mapping", G.mapping),
-        ("G_synthesis", G.synthesis),
-        ("D", D),
-        (None, G_ema),
-        ("augment_pipe", augment_pipe),
-    ]:
+    modules = [("G_mapping", G.mapping), ("G_synthesis", G.synthesis), ("D", D), ("augment_pipe", augment_pipe)]
+    if not compressing:
+        modules += [(None, G_ema)]
+    for name, module in modules:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
             module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False)
@@ -276,7 +279,9 @@ def training_loop(
         save_image_grid(images, os.path.join(run_dir, "reals.jpg"), drange=[0, 255], grid_size=grid_size)
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
-        images = torch.cat([G_ema(z=z, c=c, noise_mode="const").cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+        images = torch.cat(
+            [(G_ema if not compressing else G)(z=z, c=c, noise_mode="const").cpu() for z, c in zip(grid_z, grid_c)]
+        ).numpy()
         save_image_grid(images, os.path.join(run_dir, "fakes_init.jpg"), drange=[-1, 1], grid_size=grid_size)
 
     # Initialize logs.
@@ -355,16 +360,17 @@ def training_loop(
                 phase.end_event.record(torch.cuda.current_stream(device))
 
         # Update G_ema.
-        with torch.autograd.profiler.record_function("Gema"):
-            ema_nimg = ema_kimg * 1000
-            if ema_rampup is not None:
-                ema_nimg = min(ema_nimg, cur_nimg * ema_rampup)
-            ema_beta = 0.5 ** (batch_size / max(ema_nimg, 1e-8))
-            G_params = {n: p for n, p in G.named_parameters()}
-            for name, p_ema in G_ema.named_parameters():
-                p_ema.copy_(G_params[name].lerp(p_ema, ema_beta))
-            for b_ema, b in zip(G_ema.buffers(), G.buffers()):
-                b_ema.copy_(b)
+        if not compressing:
+            with torch.autograd.profiler.record_function("Gema"):
+                ema_nimg = ema_kimg * 1000
+                if ema_rampup is not None:
+                    ema_nimg = min(ema_nimg, cur_nimg * ema_rampup)
+                ema_beta = 0.5 ** (batch_size / max(ema_nimg, 1e-8))
+                G_params = {n: p for n, p in G.named_parameters()}
+                for name, p_ema in G_ema.named_parameters():
+                    p_ema.copy_(G_params[name].lerp(p_ema, ema_beta))
+                for b_ema, b in zip(G_ema.buffers(), G.buffers()):
+                    b_ema.copy_(b)
 
         # Update state.
         cur_nimg += batch_size
@@ -436,7 +442,11 @@ def training_loop(
         snapshot_data = None
         if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0):
             snapshot_data = dict(training_set_kwargs=dict(training_set_kwargs))
-            for name, module in [("G", G), ("D", D), ("G_ema", G_ema), ("augment_pipe", augment_pipe)]:
+            if not compressing:
+                modules = [("G", G), ("D", D), ("G_ema", G_ema), ("augment_pipe", augment_pipe)]
+            else:
+                modules = [("G", G)]
+            for name, module in modules:
                 if module is not None:
                     if num_gpus > 1:
                         misc.check_ddp_consistency(module, ignore_regex=r".*\.w_avg")
@@ -489,9 +499,7 @@ def training_loop(
 
         if rank == 0:
             this_nbatch = cur_nimg / batch_size
-            log_dict = {
-                "Tick Length": (tick_end_time - tick_start_time) / (this_nbatch - last_nbatch),
-            }
+            log_dict = {"Tick Length": (tick_end_time - tick_start_time) / (this_nbatch - last_nbatch)}
             if "Loss/D/loss" in stats_dict:
                 log_dict["Generator"] = stats_dict["Loss/G/loss"].mean
             if "Loss/D/loss" in stats_dict:

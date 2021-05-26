@@ -18,22 +18,37 @@ class SlimmingLoss(StyleGAN2Loss):
         D,
         batch_size,
         lambda_l1=0.0001,
-        pruning="l1-out",
-        distill="basic",
+        pruning="l1-in-out",
+        distill="lpips",
         teacher_path="",
-        lpips_net="alex",
-        quantization="linear",
+        lpips_net="vgg",
+        quantization="qgan",
+        input_signed=False,
+        nbits=8,
+        input_max=4,
+        quantize_mapping=True,
         **kwargs
     ):
         super().__init__(device, G_mapping, G_synthesis, D, **kwargs)
 
+        # quantization must be initialized before pruning! (otherwise the L1Weight will try to prune the wrong weights)
+        if quantization == "linear":
+            self.quantizer = Linear(
+                self, input_signed=input_signed, quantize_mapping=quantize_mapping, nbits=nbits, input_max=input_max
+            )
+        elif quantization == "qgan":
+            self.quantizer = QGAN(
+                self, input_signed=True, quantize_mapping=quantize_mapping, nbits=nbits, input_max=input_max
+            )
+        else:
+            self.quantizer = Quantization()  # does nothing
+
         if pruning == "prox":
-            self.pruner = Proximal(self)
+            self.pruner = Proximal(self)  # doesn't really work :(
         elif pruning == "mask":
             self.pruner = L1Mask(self, lambda_l1)
         elif "l1" in pruning:
-            # in -> 1, out -> 0, in-out -> (0, 1)
-            dims = ((0, 1) if "in" in pruning else 0) if "out" in pruning else 1
+            dims = ((0, 1) if "in" in pruning else 0) if "out" in pruning else 1  # in -> 1, out -> 0, in-out -> (0, 1)
             self.pruner = L1Weight(self, lambda_l1, dims=dims)
         else:
             self.pruner = Pruning()  # does nothing
@@ -44,11 +59,6 @@ class SlimmingLoss(StyleGAN2Loss):
             self.distiller = LPIPS(self, teacher_path, batch_size, lpips_net=lpips_net)
         else:
             self.distiller = Distillation()  # does nothing
-
-        if quantization == "linear":
-            self.quantizer = Linear(self, input_quant=True, input_signed=False)
-        else:
-            self.quantizer = Quantization()  # does nothing
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         assert phase in ["Gmain", "Greg", "Gboth", "Dmain", "Dreg", "Dboth"]
