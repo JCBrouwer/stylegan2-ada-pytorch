@@ -5,7 +5,6 @@ from pathlib import Path
 import lpips
 import numpy as np
 import torch
-from skimage import io, transform
 from torch_utils import misc, training_stats
 from training.dataset import ImageFolderDataset
 
@@ -39,10 +38,13 @@ class Basic(Distillation):
         self.device = parent.device
         dataset = DistillationDataset(path)
         sampler = misc.InfiniteSampler(dataset)
-        self.dataloader = iter(torch.utils.data.DataLoader(dataset=dataset, sampler=sampler, batch_size=batch_size))
+        self.iterloader = iter(torch.utils.data.DataLoader(dataset=dataset, sampler=sampler, batch_size=batch_size))
+
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items() if not k == "iterloader"}  # dataloader iterator can't be pickled
 
     def get_latents(self):
-        self.teacher_imgs, seeds = next(self.dataloader)
+        self.teacher_imgs, seeds = next(self.iterloader)
         self.teacher_imgs = self.teacher_imgs.to(self.device, non_blocking=True).to(torch.float32) / 127.5 - 1
         latents = torch.tensor([np.random.RandomState(seed).randn(self.z_dim) for seed in seeds])
         return latents.float()

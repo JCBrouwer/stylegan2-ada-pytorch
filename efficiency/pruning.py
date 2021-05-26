@@ -35,13 +35,13 @@ class L1Weight(Pruning):
         self.lambda_l1 = lambda_l1
         self.dims = dims
         self.weights = []
+        
+        print("\nPruning layers:")
         for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
-            if "fc" in name or "affine" in name:
+            if "fc" in name or "affine" in name or "conv" in name:
                 self.weights.append(mod.weight)
                 print(name, mod.weight.shape)
-            elif "conv" in name:
-                self.weights.append(mod.weight)
-                print(name, mod.weight.shape)
+        print()
 
     def after_minibatch(self):
         l1_penalty = 0

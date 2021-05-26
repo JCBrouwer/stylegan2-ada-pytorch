@@ -83,6 +83,7 @@ def setup_training_loop_kwargs(
     distill=None,
     teacher_path=None,
     lpips_net=None,
+    quantization=None,
     **kwargs,
 ):
     print("Unrecognized arguments:", kwargs)
@@ -257,6 +258,7 @@ def setup_training_loop_kwargs(
         teacher_path=teacher_path,
         batch_size=args.batch_gpu,
         lpips_net=lpips_net,
+        quantization=quantization,
     )
 
     if cfg == "cifar" or "wav" in cfg:
@@ -580,16 +582,21 @@ class CommaSeparatedList(click.ParamType):
 
 # Pruning options.
 @click.option(
-    "--pruning", help="Pruning strategy to use", type=click.Choice(["prox", "l1-in-out", "l1-out", "l1-in", "mask"])
+    "--pruning",
+    help="Pruning strategy to use",
+    type=click.Choice(["prox", "l1-in-out", "l1-out", "l1-in", "mask", "none"]),
 )
 @click.option("--lambda_l1", help="Strength of L1 penalty", type=float, default=0.001)
 
 # Distillation options.
-@click.option("--distill", help="Distillation strategy to use", type=click.Choice(["basic", "lpips"]))
+@click.option("--distill", help="Distillation strategy to use", type=click.Choice(["basic", "lpips", "none"]))
 @click.option(
     "--teacher-path", help="Path to folder or zip with samples from fully-trained teacher Generator", metavar="PATH",
 )
 @click.option("--lpips-net", help="Network to use for LPIPS perceptual loss", type=click.Choice(["alex", "vgg"]))
+
+# Quantization options.
+@click.option("--quantization", help="Quantization strategy to use", type=click.Choice(["linear", "none"]))
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".

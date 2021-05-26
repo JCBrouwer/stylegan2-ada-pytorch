@@ -6,6 +6,7 @@ from training.loss import StyleGAN2Loss
 
 from .distillation import *
 from .pruning import *
+from .quantization import *
 
 
 class SlimmingLoss(StyleGAN2Loss):
@@ -21,6 +22,7 @@ class SlimmingLoss(StyleGAN2Loss):
         distill="basic",
         teacher_path="",
         lpips_net="alex",
+        quantization="linear",
         **kwargs
     ):
         super().__init__(device, G_mapping, G_synthesis, D, **kwargs)
@@ -33,11 +35,20 @@ class SlimmingLoss(StyleGAN2Loss):
             # in -> 1, out -> 0, in-out -> (0, 1)
             dims = ((0, 1) if "in" in pruning else 0) if "out" in pruning else 1
             self.pruner = L1Weight(self, lambda_l1, dims=dims)
+        else:
+            self.pruner = Pruning()  # does nothing
 
         if distill == "basic":
             self.distiller = Basic(self, teacher_path, batch_size)
         elif distill == "lpips":
             self.distiller = LPIPS(self, teacher_path, batch_size, lpips_net=lpips_net)
+        else:
+            self.distiller = Distillation()  # does nothing
+
+        if quantization == "linear":
+            self.quantizer = Linear(self, input_quant=True, input_signed=False)
+        else:
+            self.quantizer = Quantization()  # does nothing
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         assert phase in ["Gmain", "Greg", "Gboth", "Dmain", "Dreg", "Dboth"]
@@ -53,7 +64,7 @@ class SlimmingLoss(StyleGAN2Loss):
         if do_Gmain:
             gen_z = self.distiller.get_latents().to(self.device)
             self.pruner.before_minibatch()
-            gen_img, _ = self.run_G(gen_z, None, sync=False)  # May get synced by Gpl.
+            gen_img, _ = self.run_G(gen_z, None, sync=False)
             self.pruner.after_minibatch()
             self.distiller.loss_backward(gen_img)
 
