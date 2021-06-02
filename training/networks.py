@@ -24,7 +24,7 @@ profile_context = contextlib.nullcontext
 
 
 # @misc.profiled_function
-def normalize_2nd_moment(x, dim=1, eps=1e-8):
+def normalize_2nd_moment(x, dim: int = 1, eps: float = 1e-8):
     return x * ((x * x).mean(dim=dim, keepdim=True) + eps).rsqrt()
 
 
@@ -49,11 +49,11 @@ def modulated_conv2d(
     out_channels, in_channels, kh, kw = weight.shape
 
     # Pre-normalize inputs to avoid FP16 overflow.
-    if x.dtype == torch.float16 and demodulate:
-        weight = weight * (
-            1 / np.sqrt(in_channels * kh * kw) / weight.norm(float("inf"), dim=[1, 2, 3], keepdim=True)
-        )  # max_Ikk
-        styles = styles / styles.norm(float("inf"), dim=1, keepdim=True)  # max_I
+    # if x.dtype == torch.float16 and demodulate:
+    #     weight = weight * (
+    #         1 / np.sqrt(in_channels * kh * kw) / weight.norm(float("inf"), dim=[1, 2, 3], keepdim=True)
+    #     )  # max_Ikk
+    #     styles = styles / styles.norm(float("inf"), dim=1, keepdim=True)  # max_I
 
     # Calculate per-sample weights and demodulation coefficients.
     w = None
@@ -134,7 +134,7 @@ class FullyConnectedLayer(torch.nn.Module):
             x = torch.addmm(b.unsqueeze(0), x, w.t())
         else:
             x = x.matmul(w.t())
-            x = bias_act.bias_act(x, b, act=self.activation)
+            x = bias_act.bias_act2d(x, b, act=self.activation)
         return x
 
 
@@ -167,8 +167,8 @@ class Conv2dLayer(torch.nn.Module):
         self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
         self.act_gain = bias_act.activation_funcs[activation].def_gain
 
-        memory_format = torch.channels_last if channels_last else torch.contiguous_format
-        weight = torch.randn([out_channels, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format)
+        # memory_format = torch.channels_last if channels_last else torch.contiguous_format
+        weight = torch.randn([out_channels, in_channels, kernel_size, kernel_size])  # .to(memory_format=memory_format)
         bias = torch.zeros([out_channels]) if bias else None
         if trainable:
             self.weight = torch.nn.Parameter(weight)
@@ -196,7 +196,7 @@ class Conv2dLayer(torch.nn.Module):
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        x = bias_act.bias_act(x, b, act=self.activation, gain=act_gain, clamp=act_clamp)
+        x = bias_act.bias_act4d(x, b, act=self.activation, gain=act_gain, clamp=act_clamp)
         return x
 
 
@@ -207,16 +207,16 @@ class Conv2dLayer(torch.nn.Module):
 class MappingNetwork(torch.nn.Module):
     def __init__(
         self,
-        z_dim,  # Input latent (Z) dimensionality, 0 = no latent.
-        c_dim,  # Conditioning label (C) dimensionality, 0 = no label.
-        w_dim,  # Intermediate latent (W) dimensionality.
-        num_ws,  # Number of intermediate latents to output, None = do not broadcast.
-        num_layers=8,  # Number of mapping layers.
-        embed_features=None,  # Label embedding dimensionality, None = same as w_dim.
-        layer_features=None,  # Number of intermediate features in the mapping layers, None = same as w_dim.
-        activation="lrelu",  # Activation function: 'relu', 'lrelu', etc.
-        lr_multiplier=0.01,  # Learning rate multiplier for the mapping layers.
-        w_avg_beta=0.995,  # Decay for tracking the moving average of W during training, None = do not track.
+        z_dim: int,  # Input latent (Z) dimensionality, 0 = no latent.
+        c_dim: int,  # Conditioning label (C) dimensionality, 0 = no label.
+        w_dim: int,  # Intermediate latent (W) dimensionality.
+        num_ws: int,  # Number of intermediate latents to output, None = do not broadcast.
+        num_layers: int = 8,  # Number of mapping layers.
+        embed_features: int = None,  # Label embedding dimensionality, None = same as w_dim.
+        layer_features: int = None,  # Number of intermediate features in the mapping layers, None = same as w_dim.
+        activation: str = "lrelu",  # Activation function: 'relu', 'lrelu', etc.
+        lr_multiplier: float = 0.01,  # Learning rate multiplier for the mapping layers.
+        w_avg_beta: float = 0.995,  # Decay for tracking the moving average of W during training, None = do not track.
     ):
         super().__init__()
         self.z_dim = z_dim
@@ -244,16 +244,18 @@ class MappingNetwork(torch.nn.Module):
 
         if num_ws is not None and w_avg_beta is not None:
             self.register_buffer("w_avg", torch.zeros([w_dim]))
+            self.should_average = True
 
-    def forward(self, z, c=None, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
+    def forward(
+        self, z, c=None, truncation_psi: float = 1, truncation_cutoff: float = None, skip_w_avg_update: bool = False
+    ):
         # Embed, normalize, and concat inputs.
-        x = None
-        with profile_context("input"):
-            if self.z_dim > 0:
-                x = normalize_2nd_moment(z.to(torch.float32))
-            if self.c_dim > 0:
-                y = normalize_2nd_moment(self.embed(c.to(torch.float32)))
-                x = torch.cat([x, y], dim=1) if x is not None else y
+        if self.z_dim > 0:
+            x = normalize_2nd_moment(z.to(torch.float32))
+
+        if self.c_dim > 0:
+            y = normalize_2nd_moment(self.embed(c.to(torch.float32)))
+            x = torch.cat([x, y], dim=1) if x is not None else y
 
         # Main layers.
         for idx in range(self.num_layers):
@@ -261,27 +263,27 @@ class MappingNetwork(torch.nn.Module):
             x = layer(x)
 
         # Update moving average of W.
-        if self.w_avg_beta is not None and self.training and not skip_w_avg_update:
-            with profile_context("update_w_avg"):
-                self.w_avg.copy_(x.detach().mean(dim=0).lerp(self.w_avg, self.w_avg_beta))
+        if self.should_average and self.training and not skip_w_avg_update:
+            self.w_avg.copy_(x.detach().mean(dim=0).lerp(self.w_avg, self.w_avg_beta))
 
         # Broadcast.
         if self.num_ws is not None:
-            with profile_context("broadcast"):
-                x = x.unsqueeze(1).repeat([1, self.num_ws, 1])
+            x = x.unsqueeze(1).repeat([1, self.num_ws, 1])
 
         # Apply truncation.
         if truncation_psi != 1:
-            with profile_context("truncate"):
-                assert self.w_avg_beta is not None
-                if self.num_ws is None or truncation_cutoff is None:
-                    x = self.w_avg.lerp(x, truncation_psi)
-                else:
-                    x[:, :truncation_cutoff] = self.w_avg.lerp(x[:, :truncation_cutoff], truncation_psi)
+            # assert self.w_avg_beta is not None
+            if self.num_ws is None or truncation_cutoff is None:
+                x = self.w_avg.lerp(x, truncation_psi)
+            else:
+                x[:, :truncation_cutoff] = self.w_avg.lerp(x[:, :truncation_cutoff], truncation_psi)
         return x
 
 
 # ----------------------------------------------------------------------------
+@torch.fx.wrap
+def torch_randn(x, shape):
+    return torch.randn(shape)
 
 
 # @persistence.persistent_class
@@ -311,9 +313,9 @@ class SynthesisLayer(torch.nn.Module):
         self.act_gain = bias_act.activation_funcs[activation].def_gain
 
         self.affine = FullyConnectedLayer(w_dim, in_channels, bias_init=1)
-        memory_format = torch.channels_last if channels_last else torch.contiguous_format
+        # memory_format = torch.channels_last if channels_last else torch.contiguous_format
         self.weight = torch.nn.Parameter(
-            torch.randn([out_channels, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format)
+            torch.randn([out_channels, in_channels, kernel_size, kernel_size])  # .to(memory_format=memory_format)
         )
         if use_noise:
             self.register_buffer("noise_const", torch.randn([resolution, resolution]))
@@ -321,15 +323,13 @@ class SynthesisLayer(torch.nn.Module):
         self.bias = torch.nn.Parameter(torch.zeros([out_channels]))
 
     def forward(self, x, w, noise_mode="random", fused_modconv=True, gain=1):
-        assert noise_mode in ["random", "const", "none"]
+        # assert noise_mode in ["random", "const", "none"]
         in_resolution = self.resolution // self.up
         styles = self.affine(w)
 
         noise = None
         if self.use_noise and noise_mode == "random":
-            noise = (
-                torch.randn([x.shape[0], 1, self.resolution, self.resolution], device=x.device) * self.noise_strength
-            )
+            noise = torch_randn(x, [x.shape[0], 1, self.resolution, self.resolution]).to(x.device) * self.noise_strength
         if self.use_noise and noise_mode == "const":
             noise = self.noise_const * self.noise_strength
 
@@ -348,7 +348,7 @@ class SynthesisLayer(torch.nn.Module):
 
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
-        x = bias_act.bias_act(x, self.bias.to(x.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
+        x = bias_act.bias_act4d(x, self.bias.to(x.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
         return x
 
 
@@ -361,9 +361,9 @@ class ToRGBLayer(torch.nn.Module):
         super().__init__()
         self.conv_clamp = conv_clamp
         self.affine = FullyConnectedLayer(w_dim, in_channels, bias_init=1)
-        memory_format = torch.channels_last if channels_last else torch.contiguous_format
+        # memory_format = torch.channels_last if channels_last else torch.contiguous_format
         self.weight = torch.nn.Parameter(
-            torch.randn([out_channels, in_channels, kernel_size, kernel_size]).to(memory_format=memory_format)
+            torch.randn([out_channels, in_channels, kernel_size, kernel_size])  # .to(memory_format=memory_format)
         )
         self.bias = torch.nn.Parameter(torch.zeros([out_channels]))
         self.weight_gain = 1 / np.sqrt(in_channels * (kernel_size ** 2))
@@ -371,7 +371,7 @@ class ToRGBLayer(torch.nn.Module):
     def forward(self, x, w, fused_modconv=True):
         styles = self.affine(w) * self.weight_gain
         x = modulated_conv2d(x=x, weight=self.weight, styles=styles, demodulate=False, fused_modconv=fused_modconv)
-        x = bias_act.bias_act(x, self.bias.to(x.dtype), clamp=self.conv_clamp)
+        x = bias_act.bias_act4d(x, self.bias.to(x.dtype), clamp=self.conv_clamp)
         return x
 
 
@@ -395,7 +395,7 @@ class SynthesisBlock(torch.nn.Module):
         fp16_channels_last=False,  # Use channels-last memory format with FP16?
         **layer_kwargs,  # Arguments for SynthesisLayer.
     ):
-        assert architecture in ["orig", "skip", "resnet"]
+        # assert architecture in ["orig", "skip", "resnet"]
         super().__init__()
         self.in_channels = in_channels
         self.w_dim = w_dim
@@ -454,43 +454,43 @@ class SynthesisBlock(torch.nn.Module):
                 channels_last=self.channels_last,
             )
 
-    def forward(self, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
-        w_iter = iter(ws.unbind(dim=1))
+    def forward(self, x, img, ws, force_fp32=True, fused_modconv=None):
+        w_iter = ws.unbind(dim=1)
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
-        memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
+        # memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
         if fused_modconv is None:
             with misc.suppress_tracer_warnings():  # this value will be treated as a constant
                 fused_modconv = (not self.training) and (dtype == torch.float32 or int(x.shape[0]) == 1)
 
         # Input.
         if self.in_channels == 0:
-            x = self.const.to(dtype=dtype, memory_format=memory_format)
+            x = self.const.to(dtype=dtype)  # , memory_format=memory_format)
             x = x.unsqueeze(0).repeat([ws.shape[0], 1, 1, 1])
         else:
-            x = x.to(dtype=dtype, memory_format=memory_format)
+            x = x.to(dtype=dtype)  # , memory_format=memory_format)
 
         # Main layers.
         if self.in_channels == 0:
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
+            x = self.conv1(x, w_iter[0], fused_modconv=fused_modconv)
         elif self.architecture == "resnet":
             y = self.skip(x, gain=np.sqrt(0.5))
-            x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
+            x = self.conv0(x, w_iter[0], fused_modconv=fused_modconv)
+            x = self.conv1(x, w_iter[1], fused_modconv=fused_modconv, gain=np.sqrt(0.5))
             x = y.add_(x)
         else:
-            x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
+            x = self.conv0(x, w_iter[0], fused_modconv=fused_modconv)
+            x = self.conv1(x, w_iter[1], fused_modconv=fused_modconv)
 
         # ToRGB.
         if img is not None:
             img = upfirdn2d.upsample2d(img, self.resample_filter)
         if self.is_last or self.architecture == "skip":
-            y = self.torgb(x, next(w_iter), fused_modconv=fused_modconv)
-            y = y.to(dtype=torch.float32, memory_format=torch.contiguous_format)
+            y = self.torgb(x, w_iter[-1], fused_modconv=fused_modconv)
+            y = y.to(dtype=torch.float32)  # , memory_format=torch.contiguous_format)
             img = img.add_(y) if img is not None else y
 
-        assert x.dtype == dtype
-        assert img is None or img.dtype == torch.float32
+        # assert x.dtype == dtype
+        # assert img is None or img.dtype == torch.float32
         return x, img
 
 
@@ -509,7 +509,7 @@ class SynthesisNetwork(torch.nn.Module):
         num_fp16_res=0,  # Use FP16 for the N highest resolutions.
         **block_kwargs,  # Arguments for SynthesisBlock.
     ):
-        assert img_resolution >= 4 and img_resolution & (img_resolution - 1) == 0
+        # assert img_resolution >= 4 and img_resolution & (img_resolution - 1) == 0
         super().__init__()
         self.w_dim = w_dim
         self.img_resolution = img_resolution
@@ -533,27 +533,26 @@ class SynthesisNetwork(torch.nn.Module):
                 img_channels=img_channels,
                 is_last=is_last,
                 use_fp16=use_fp16,
-                **block_kwargs,
             )
             self.num_ws += block.num_conv
             if is_last:
                 self.num_ws += block.num_torgb
             setattr(self, f"b{res}", block)
 
-    def forward(self, ws, **block_kwargs):
+    def forward(self, ws):
         block_ws = []
-        with profile_context("split_ws"):
-            ws = ws.to(torch.float32)
-            w_idx = 0
-            for res in self.block_resolutions:
-                block = getattr(self, f"b{res}")
-                block_ws.append(ws.narrow(1, w_idx, block.num_conv + block.num_torgb))
-                w_idx += block.num_conv
+
+        ws = ws.to(torch.float32)
+        w_idx = 0
+        for res in self.block_resolutions:
+            block = getattr(self, f"b{res}")
+            block_ws.append(ws.narrow(1, w_idx, block.num_conv + block.num_torgb))
+            w_idx += block.num_conv
 
         x = img = None
         for res, cur_ws in zip(self.block_resolutions, block_ws):
             block = getattr(self, f"b{res}")
-            x, img = block(x, img, cur_ws, **block_kwargs)
+            x, img = block(x, img, cur_ws)
         return img
 
 
@@ -611,8 +610,8 @@ class DiscriminatorBlock(torch.nn.Module):
         fp16_channels_last=False,  # Use channels-last memory format with FP16?
         freeze_layers=0,  # Freeze-D: Number of layers to freeze.
     ):
-        assert in_channels in [0, tmp_channels]
-        assert architecture in ["orig", "skip", "resnet"]
+        # assert in_channels in [0, tmp_channels]
+        # assert architecture in ["orig", "skip", "resnet"]
         super().__init__()
         self.in_channels = in_channels
         self.resolution = resolution
@@ -679,17 +678,17 @@ class DiscriminatorBlock(torch.nn.Module):
                 channels_last=self.channels_last,
             )
 
-    def forward(self, x, img, force_fp32=False):
+    def forward(self, x, img, force_fp32=True):
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
-        memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
+        # memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
 
         # Input.
         if x is not None:
-            x = x.to(dtype=dtype, memory_format=memory_format)
+            x = x.to(dtype=dtype)  # , memory_format=memory_format)
 
         # FromRGB.
         if self.in_channels == 0 or self.architecture == "skip":
-            img = img.to(dtype=dtype, memory_format=memory_format)
+            img = img.to(dtype=dtype)  # , memory_format=memory_format)
             y = self.fromrgb(img)
             x = x + y if x is not None else y
             img = upfirdn2d.downsample2d(img, self.resample_filter) if self.architecture == "skip" else None
@@ -704,7 +703,7 @@ class DiscriminatorBlock(torch.nn.Module):
             x = self.conv0(x)
             x = self.conv1(x)
 
-        assert x.dtype == dtype
+        # assert x.dtype == dtype
         return x, img
 
 
@@ -755,7 +754,7 @@ class DiscriminatorEpilogue(torch.nn.Module):
         activation="lrelu",  # Activation function: 'relu', 'lrelu', etc.
         conv_clamp=None,  # Clamp the output of convolution layers to +-X, None = disable clamping.
     ):
-        assert architecture in ["orig", "skip", "resnet"]
+        # assert architecture in ["orig", "skip", "resnet"]
         super().__init__()
         self.in_channels = in_channels
         self.cmap_dim = cmap_dim
@@ -776,15 +775,15 @@ class DiscriminatorEpilogue(torch.nn.Module):
         self.fc = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         self.out = FullyConnectedLayer(in_channels, 1 if cmap_dim == 0 else cmap_dim)
 
-    def forward(self, x, img, cmap, force_fp32=False):
+    def forward(self, x, img, cmap, force_fp32=True):
         _ = force_fp32  # unused
         dtype = torch.float32
-        memory_format = torch.contiguous_format
+        # memory_format = torch.contiguous_format
 
         # FromRGB.
-        x = x.to(dtype=dtype, memory_format=memory_format)
+        x = x.to(dtype=dtype)  # , memory_format=memory_format)
         if self.architecture == "skip":
-            img = img.to(dtype=dtype, memory_format=memory_format)
+            img = img.to(dtype=dtype)  # , memory_format=memory_format)
             x = x + self.fromrgb(img)
 
         # Main layers.
@@ -798,7 +797,7 @@ class DiscriminatorEpilogue(torch.nn.Module):
         if self.cmap_dim > 0:
             x = (x * cmap).sum(dim=1, keepdim=True) * (1 / np.sqrt(self.cmap_dim))
 
-        assert x.dtype == dtype
+        # assert x.dtype == dtype
         return x
 
 

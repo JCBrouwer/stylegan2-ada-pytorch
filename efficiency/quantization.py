@@ -2,6 +2,8 @@ import copy
 from abc import abstractmethod
 
 import torch
+import torch.fx
+from torch.quantization.quantize_fx import convert_fx, prepare_fx
 
 
 class Quantization:
@@ -90,7 +92,7 @@ class QGAN(Quantization):
         print()
 
     def prepare_qgan(self, module, param_name):
-        # keep the unquantized weights as a nn.Parameter for backprop
+        # keep the unquantized weights as an nn.Parameter for backprop
         setattr(module, f"unquant_{param_name}", copy.deepcopy(getattr(module, param_name)))
         # delete the original weight nn.Parameter
         delattr(module, param_name)
@@ -104,14 +106,15 @@ class QGAN(Quantization):
     def forward_pre_hook(self, module, input):
         module.weight.data = self.quantize_parameters(module, "weight")
         module.bias.data = self.quantize_parameters(module, "bias")
-        # output = []
-        # for i in range(len(input)):
-        #     max_val = self.input_max
-        #     min_val = -max_val if self.input_signed else 0.0
-        #     output.append(
-        #         QuantizeLinear.apply(input[i].clamp(min=min_val, max=max_val), self.input_signed, self.nbits, max_val)
-        #     )
-        # return tuple(output)
+
+        output = []
+        for i in range(len(input)):
+            max_val = self.input_max
+            min_val = -max_val if self.input_signed else 0.0
+            output.append(
+                QuantizeLinear.apply(input[i].clamp(min=min_val, max=max_val), self.input_signed, self.nbits, max_val)
+            )
+        return tuple(output)
 
     def quantize_parameters(self, module, param_name):
         # maximization
@@ -134,26 +137,17 @@ class QGAN(Quantization):
 
 # automatic torch.quantization stuff doesn't seem to work in our case :/
 def torch_quantize(module):
-    module.register_forward_pre_hook(lambda self, input: torch.quantization.QuantStub()(input))
-    module.register_forward_hook(lambda self, input, output: torch.quantization.DeQuantStub()(output))
+    # module = torch.jit.trace(module, torch.randn((8, 512), device="cuda"))
+    module = torch.fx.symbolic_trace(
+        module, concrete_args={"truncation_psi": 1, "truncation_cutoff": None, "skip_w_avg_update": False}
+    )
+    module = prepare_fx(module.eval(), {"": torch.quantization.get_default_qconfig("fbgemm")})
+    module = convert_fx(module)
 
-    # module.train()
-    # fused_model = torch.quantization.fuse_modules(module, [["conv1", "bn1", "relu"]], inplace=True)
-    # for module_name, module in fused_model.named_children():
-    #     if "layer" in module_name:
-    #         for basic_block_name, basic_block in module.named_children():
-    #             torch.quantization.fuse_modules(
-    #                 basic_block, [["conv1", "bn1", "relu1"], ["conv2", "bn2"]], inplace=True
-    #             )
-    #             for sub_block_name, sub_block in basic_block.named_children():
-    #                 if sub_block_name == "downsample":
-    #                     torch.quantization.fuse_modules(sub_block, [["0", "1"]], inplace=True)
-
-    qconfig_dict = torch.quantization.get_default_qat_qconfig("fbgemm")
-    module.qconfig = qconfig_dict
-
-    # module = torch.fx.symbolic_trace(module)  # TODO figure out a way to symbolic trace?
-    # module = torch.quantization.prepare_fx(module, qconfig_dict)
-
-    module = torch.quantization.prepare_qat(module)
+    # qconfig_dict = torch.quantization.get_default_qat_qconfig("fbgemm")
+    # print(qconfig_dict)
+    # for mod in module.modules():
+    #     mod.qconfig = qconfig_dict
+    #     torch.quantization.add_quant_dequant(mod)
+    # module = torch.quantization.prepare_qat(module, inplace=True)
     return module

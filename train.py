@@ -604,7 +604,9 @@ class CommaSeparatedList(click.ParamType):
 @click.option("--lpips-net", help="Network to use for LPIPS perceptual loss", type=click.Choice(["alex", "vgg"]))
 
 # Quantization options.
-@click.option("--quantization", help="Quantization strategy to use", type=click.Choice(["linear", "qgan", "none"]))
+@click.option(
+    "--quantization", help="Quantization strategy to use", type=click.Choice(["linear", "qgan", "none", "torch"])
+)
 @click.option("--input-signed", help="Whether to quantize to signed integers", type=bool, metavar="BOOL", default=False)
 @click.option("--nbits", help="Number of bits to quantize to", type=int, metavar="INT", default=8)
 @click.option(

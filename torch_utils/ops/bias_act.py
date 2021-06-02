@@ -11,12 +11,14 @@
 import os
 import sys
 import warnings
+
+import dnnlib
 import numpy as np
 import torch
-import dnnlib
 
-from .. import custom_ops
-from .. import misc
+from .. import custom_ops, misc
+
+torch.fx.wrap("len")
 
 # ----------------------------------------------------------------------------
 
@@ -94,7 +96,57 @@ def _init():
 # ----------------------------------------------------------------------------
 
 
-def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, impl="ref"):
+def bias_act2d(
+    x,
+    b=torch.zeros([]),
+    dim: int = 1,
+    act: str = "linear",
+    alpha: float = 0,
+    gain: float = 1,
+    clamp: float = -1,
+    impl: str = "ref",
+):
+    if b is not None:
+        print(x.size(), b.size())
+        x = x + b[None, :]
+
+    x = torch.nn.functional.leaky_relu(x, alpha)
+
+    if gain != 1:
+        x = x * gain
+
+    if clamp is not None and clamp >= 0:
+        x = x.clamp(-clamp, clamp)
+
+    return x
+
+
+def bias_act4d(
+    x,
+    b=torch.zeros([]),
+    dim: int = 1,
+    act: str = "linear",
+    alpha: float = 0,
+    gain: float = 1,
+    clamp: float = -1,
+    impl: str = "ref",
+):
+    if b is not None:
+        print(x.size(), b.size())
+        x = x + b[None, :, None, None]
+
+    x = torch.nn.functional.leaky_relu(x, alpha)
+
+    if gain != 1:
+        x = x * gain
+
+    if clamp is not None and clamp >= 0:
+        x = x.clamp(-clamp, clamp)
+
+    return x
+
+
+def nv_bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, impl="ref"):
     r"""Fused bias and activation function.
 
     Adds bias `b` to activation tensor `x`, evaluates activation function `act`,

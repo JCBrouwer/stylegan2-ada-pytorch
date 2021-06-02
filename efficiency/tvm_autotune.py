@@ -5,12 +5,11 @@ from timeit import timeit as time
 import dnnlib
 import legacy
 import onnx
+import torch
 import tvm
 import tvm.contrib.graph_executor as runtime
 from tvm import autotvm, relay
 from tvm.autotvm.tuner import XGBTuner
-
-import torch
 
 torch.set_grad_enabled(False)
 torch.backends.cudnn.benchmark = True
@@ -86,7 +85,7 @@ def autotune(mod, params):
                 builder=autotvm.LocalBuilder(timeout=30),
                 runner=autotvm.LocalRunner(number=20, repeat=3, timeout=15, min_repeat_ms=150),
             ),
-            callbacks=[autotvm.callback.progress_bar(trials, prefix=prefix), autotvm.callback.log_to_file(log_file),],
+            callbacks=[autotvm.callback.progress_bar(trials, prefix=prefix), autotvm.callback.log_to_file(log_file)],
         )
 
 
@@ -127,6 +126,9 @@ if __name__ == "__main__":
     log_file = f"{network_name}.log"
 
     generator = load_network()
+    torch.jit.script(generator.mapping)
+    torch.jit.script(generator.synthesis)
+    exit(0)
 
     mod, params = relay_module(generator, use_onnx=use_onnx)
 

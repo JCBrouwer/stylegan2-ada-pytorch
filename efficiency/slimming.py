@@ -1,5 +1,8 @@
+from time import time
+
 import numpy as np
 import torch
+import torch.fx
 from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
 from training.loss import StyleGAN2Loss
@@ -7,6 +10,48 @@ from training.loss import StyleGAN2Loss
 from .distillation import *
 from .pruning import *
 from .quantization import *
+
+torch.fx.wrap("len")
+
+
+def save_torchscript_model(model, model_dir, model_filename):
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+    model_filepath = os.path.join(model_dir, model_filename)
+    torch.jit.save(torch.jit.script(model), model_filepath)
+
+
+def load_torchscript_model(model_filepath, device):
+    model = torch.jit.load(model_filepath, map_location=device)
+    return model
+
+
+def measure_inference_latency(G_map, G_synth, device, input_size=(16, 512), num_samples=100, num_warmups=10):
+
+    G_map.to(device)
+    G_map.eval()
+    G_synth.to(device)
+    G_synth.eval()
+
+    x = torch.randn(size=input_size).to(device)
+
+    with torch.no_grad():
+        for _ in range(num_warmups):
+            ws = G_map(x, None)
+            _ = G_synth(ws, force_fp32=device == "cpu")
+    torch.cuda.synchronize()
+
+    with torch.no_grad():
+        start_time = time()
+        for _ in range(num_samples):
+            ws = G_map(x, None)
+            _ = G_synth(ws, force_fp32=device == "cpu")
+            torch.cuda.synchronize()
+        end_time = time()
+    elapsed_time = end_time - start_time
+    elapsed_time_ave = elapsed_time / num_samples
+
+    print(elapsed_time_ave)
 
 
 class SlimmingLoss(StyleGAN2Loss):
@@ -40,6 +85,9 @@ class SlimmingLoss(StyleGAN2Loss):
             self.quantizer = QGAN(
                 self, input_signed=True, quantize_mapping=quantize_mapping, nbits=nbits, input_max=input_max
             )
+        elif quantization == "torch":
+            self.G_mapping = torch_quantize(self.G_mapping)
+            self.G_synthesis = torch_quantize(self.G_synthesis)
         else:
             self.quantizer = Quantization()  # does nothing
 
@@ -71,7 +119,8 @@ class SlimmingLoss(StyleGAN2Loss):
         # Generator losses
         #
 
-        if do_Gmain:
+        # if do_Gmain:
+        for _ in range(32):
             gen_z = self.distiller.get_latents().to(self.device)
             self.pruner.before_minibatch()
             gen_img, _ = self.run_G(gen_z, None, sync=False)
@@ -87,6 +136,21 @@ class SlimmingLoss(StyleGAN2Loss):
             # loss = loss_Gmain.mean().mul(gain)
             # self.pruner.before_backward()
             # loss.backward()
+
+        qGmap = torch.quantization.convert(copy.deepcopy(self.G_mapping).to("cpu"), inplace=True)
+        qGsynth = torch.quantization.convert(copy.deepcopy(self.G_synthesis).to("cpu"), inplace=True)
+
+        # Print quantized model.
+        print(qGmap)
+        print(qGsynth)
+
+        measure_inference_latency(self.G_mapping, self.G_synthesis, "cpu")
+        measure_inference_latency(qGmap, qGsynth, "cpu")
+
+        measure_inference_latency(self.G_mapping, self.G_synthesis, "cuda")
+        measure_inference_latency(qGmap, qGsynth, "cuda")
+
+        exit(0)
 
         return  # only use pruning and distillation for now
 

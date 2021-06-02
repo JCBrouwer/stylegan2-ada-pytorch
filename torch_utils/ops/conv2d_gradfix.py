@@ -35,40 +35,40 @@ def no_weight_gradients():
 # ----------------------------------------------------------------------------
 
 
-def conv2d(input, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
-    if _should_use_custom_op(input):
-        return _conv2d_gradfix(
-            transpose=False,
-            weight_shape=weight.shape,
-            stride=stride,
-            padding=padding,
-            output_padding=0,
-            dilation=dilation,
-            groups=groups,
-        ).apply(input, weight, bias)
+def conv2d(input, weight, bias=None, stride: int = 1, padding: int = 0, dilation: int = 1, groups: int = 1):
+    # if _should_use_custom_op(input):
+    #     return _conv2d_gradfix(
+    #         transpose=False,
+    #         weight_shape=weight.shape,
+    #         stride=stride,
+    #         padding=padding,
+    #         output_padding=0,
+    #         dilation=dilation,
+    #         groups=groups,
+    #     ).apply(input, weight, bias)
     return torch.nn.functional.conv2d(
-        input=input, weight=weight, bias=bias, stride=stride, padding=padding, dilation=dilation, groups=groups
+        input=input, weight=weight, bias=bias, stride=[stride], padding=[padding], dilation=[dilation], groups=groups
     )
 
 
 def conv_transpose2d(input, weight, bias=None, stride=1, padding=0, output_padding=0, groups=1, dilation=1):
-    if _should_use_custom_op(input):
-        return _conv2d_gradfix(
-            transpose=True,
-            weight_shape=weight.shape,
-            stride=stride,
-            padding=padding,
-            output_padding=output_padding,
-            groups=groups,
-            dilation=dilation,
-        ).apply(input, weight, bias)
+    # if _should_use_custom_op(input):
+    #     return _conv2d_gradfix(
+    #         transpose=True,
+    #         weight_shape=weight.shape,
+    #         stride=stride,
+    #         padding=padding,
+    #         output_padding=output_padding,
+    #         groups=groups,
+    #         dilation=dilation,
+    #     ).apply(input, weight, bias)
     return torch.nn.functional.conv_transpose2d(
         input=input,
         weight=weight,
         bias=bias,
         stride=stride,
         padding=padding,
-        output_padding=output_padding,
+        output_padding=[output_padding],
         groups=groups,
         dilation=dilation,
     )
@@ -78,6 +78,7 @@ def conv_transpose2d(input, weight, bias=None, stride=1, padding=0, output_paddi
 
 
 def _should_use_custom_op(input):
+    return False
     # assert isinstance(input, torch.Tensor)
     if (not enabled) or (not torch.backends.cudnn.enabled):
         return False
