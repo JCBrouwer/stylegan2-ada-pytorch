@@ -49,10 +49,10 @@ class Basic(Distillation):
         latents = torch.tensor([np.random.RandomState(seed).randn(self.z_dim) for seed in seeds])
         return latents.float()
 
-    def loss_backward(self, student_imgs):
+    def loss_backward(self, student_imgs, retain_graph=False):
         loss = torch.nn.functional.l1_loss(self.teacher_imgs, student_imgs)
         training_stats.report("Distillation/loss", loss)
-        loss.backward()
+        loss.backward(retain_graph=retain_graph)
 
 
 class LPIPS(Basic):
@@ -60,21 +60,20 @@ class LPIPS(Basic):
         super().__init__(parent, path, batch_size)
         self.perceptual_loss = lpips.LPIPS(net=lpips_net).to(self.device)
 
-    def loss_backward(self, student_imgs):
-        loss = torch.nn.functional.l1_loss(self.teacher_imgs, student_imgs)
+    def loss_backward(self, student_imgs, retain_graph=False):
+        super().loss_backward(student_imgs, retain_graph=True)
         perceptual = self.perceptual_loss(self.teacher_imgs, student_imgs).sum()
-        training_stats.report("Distillation/loss", loss)
         training_stats.report("Distillation/perceptual", perceptual)
-        (loss + perceptual).backward()
+        perceptual.backward(retain_graph=retain_graph)
 
 
-class Advanced(Distillation):
-    """
-    
-    """
-
-    def __init__(self):
-        return
-
-    def before_backward(self):
-        return
+class SelfSupervised(LPIPS):
+    def loss_backward(self, student_imgs):
+        super().loss_backward(student_imgs, retain_graph=True)
+        gen_logits_o = self.parent.run_D(self.teacher_imgs, None, sync=False)
+        gen_logits_c = self.parent.run_D(student_imgs, None, sync=False)
+        ldo = torch.nn.functional.softplus(gen_logits_o)
+        ldc = torch.nn.functional.softplus(gen_logits_c)
+        loss = torch.nn.functional.l1_loss(ldo, ldc)
+        training_stats.report("Distillation/self-supervised", loss)
+        loss.backward()

@@ -2,6 +2,7 @@ import copy
 from abc import abstractmethod
 
 import torch
+from training.networks import SynthesisBlock
 
 
 class Quantization:
@@ -156,4 +157,26 @@ def torch_quantize(module):
     # module = torch.quantization.prepare_fx(module, qconfig_dict)
 
     module = torch.quantization.prepare_qat(module)
+    return module
+
+
+def recursive_half(obj):
+    if obj != None and not isinstance(obj, (str, float, int, list, dict, set)):
+        for attr, val in obj.__dict__.items():
+            if isinstance(val, (torch.Tensor, torch.nn.Parameter)):
+                setattr(obj, attr, val.half())
+            if isinstance(val, SynthesisBlock):
+                val.use_fp16 = True
+            recursive_half(getattr(obj, attr))
+
+
+def print_and_half(x):
+    print(x.flatten()[:10])
+    return x.half()
+
+
+def force_fp16(module):
+    module.register_forward_pre_hook(lambda self, input: tuple(print_and_half(i) for i in input if i is not None))
+    module = module.half()
+    recursive_half(module)
     return module

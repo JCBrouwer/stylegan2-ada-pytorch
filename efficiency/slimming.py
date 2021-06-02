@@ -40,6 +40,11 @@ class SlimmingLoss(StyleGAN2Loss):
             self.quantizer = QGAN(
                 self, input_signed=True, quantize_mapping=quantize_mapping, nbits=nbits, input_max=input_max
             )
+        elif quantization == "fp16":
+            self.G_mapping = force_fp16(self.G_mapping)
+            self.G_synthesis = force_fp16(self.G_synthesis)
+            misc.print_module_summary(self.G_mapping, [torch.randn(8, 512), None])
+            misc.print_module_summary(self.Synthesis, [torch.randn(8, 18, 512)])
         else:
             self.quantizer = Quantization()  # does nothing
 
@@ -57,6 +62,8 @@ class SlimmingLoss(StyleGAN2Loss):
             self.distiller = Basic(self, teacher_path, batch_size)
         elif distill == "lpips":
             self.distiller = LPIPS(self, teacher_path, batch_size, lpips_net=lpips_net)
+        elif distill == "self-supervised":
+            self.distiller = SelfSupervised(self, teacher_path, batch_size)
         else:
             self.distiller = Distillation()  # does nothing
 

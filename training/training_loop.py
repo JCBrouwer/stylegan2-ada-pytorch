@@ -520,6 +520,8 @@ def training_loop(
                 log_dict["Distillation/Loss"] = stats_dict["Distillation/loss"].mean
             if "Distillation/perceptual" in stats_dict:
                 log_dict["Distillation/Perceptual"] = stats_dict["Distillation/perceptual"].mean
+            if "Distillation/self-supervised" in stats_dict:
+                log_dict["Distillation/Self-supervised Loss"] = stats_dict["Distillation/self-supervised"].mean
             wandb.log(log_dict, step=cur_nimg)
             last_nbatch = this_nbatch
 

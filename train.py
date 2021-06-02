@@ -597,14 +597,18 @@ class CommaSeparatedList(click.ParamType):
 @click.option("--lambda_l1", help="Strength of L1 penalty", type=float, default=0.001)
 
 # Distillation options.
-@click.option("--distill", help="Distillation strategy to use", type=click.Choice(["basic", "lpips", "none"]))
+@click.option(
+    "--distill", help="Distillation strategy to use", type=click.Choice(["basic", "lpips", "self-supervised", "none"])
+)
 @click.option(
     "--teacher-path", help="Path to folder or zip with samples from fully-trained teacher Generator", metavar="PATH"
 )
 @click.option("--lpips-net", help="Network to use for LPIPS perceptual loss", type=click.Choice(["alex", "vgg"]))
 
 # Quantization options.
-@click.option("--quantization", help="Quantization strategy to use", type=click.Choice(["linear", "qgan", "none"]))
+@click.option(
+    "--quantization", help="Quantization strategy to use", type=click.Choice(["fp16", "linear", "qgan", "none"])
+)
 @click.option("--input-signed", help="Whether to quantize to signed integers", type=bool, metavar="BOOL", default=False)
 @click.option("--nbits", help="Number of bits to quantize to", type=int, metavar="INT", default=8)
 @click.option(

@@ -250,9 +250,9 @@ class MappingNetwork(torch.nn.Module):
         x = None
         with profile_context("input"):
             if self.z_dim > 0:
-                x = normalize_2nd_moment(z.to(torch.float32))
+                x = normalize_2nd_moment(z)  # .to(torch.float32)
             if self.c_dim > 0:
-                y = normalize_2nd_moment(self.embed(c.to(torch.float32)))
+                y = normalize_2nd_moment(self.embed(c))  # .to(torch.float32)
                 x = torch.cat([x, y], dim=1) if x is not None else y
 
         # Main layers.
@@ -543,7 +543,7 @@ class SynthesisNetwork(torch.nn.Module):
     def forward(self, ws, **block_kwargs):
         block_ws = []
         with profile_context("split_ws"):
-            ws = ws.to(torch.float32)
+            # ws = ws.to(torch.float32)
             w_idx = 0
             for res in self.block_resolutions:
                 block = getattr(self, f"b{res}")
