@@ -87,6 +87,7 @@ class Dataset(torch.utils.data.Dataset):
         return self._raw_idx.size
 
     def __getitem__(self, idx):
+        # print(idx)
         image = self._load_raw_image(self._raw_idx[idx])
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
@@ -219,6 +220,7 @@ class ImageFolderDataset(Dataset):
         return dict(super().__getstate__(), _zipfile=None)
 
     def _load_raw_image(self, raw_idx):
+        # print(raw_idx)
         fname = self._image_fnames[raw_idx]
         with self._open_file(fname) as f:
             image = np.array(PIL.Image.open(f))
@@ -228,6 +230,7 @@ class ImageFolderDataset(Dataset):
             #     image = np.array(PIL.Image.open(f))
         if image.ndim == 2:
             image = image[:, :, np.newaxis]  # HW => HWC
+        # print(image.shape)
         image = image.transpose(2, 0, 1)  # HWC => CHW
         return image
 

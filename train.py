@@ -239,7 +239,7 @@ def setup_training_loop_kwargs(
     args.G_kwargs.synthesis_kwargs.channel_base = args.D_kwargs.channel_base = int(spec.fmaps * 32768)
     args.G_kwargs.synthesis_kwargs.channel_max = args.D_kwargs.channel_max = 512
     args.G_kwargs.mapping_kwargs.num_layers = spec.map
-    args.G_kwargs.synthesis_kwargs.num_fp16_res = args.D_kwargs.num_fp16_res = 3  # enable mixed-precision training
+    args.G_kwargs.synthesis_kwargs.num_fp16_res = args.D_kwargs.num_fp16_res = 5  # enable mixed-precision training
     args.G_kwargs.synthesis_kwargs.conv_clamp = (
         args.D_kwargs.conv_clamp
     ) = 256  # clamp activations to avoid float16 overflow

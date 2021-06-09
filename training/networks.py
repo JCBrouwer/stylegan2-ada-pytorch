@@ -62,7 +62,7 @@ def modulated_conv2d(
         w = weight.unsqueeze(0)  # [NOIkk]
         w = w * styles.reshape(batch_size, 1, -1, 1, 1)  # [NOIkk]
     if demodulate:
-        dcoefs = ((w * w).sum(dim=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
+        dcoefs = (w.square().sum(dim=[2, 3, 4]) + 1e-8).rsqrt()  # [NO]
     if demodulate and fused_modconv:
         w = w * dcoefs.reshape(batch_size, -1, 1, 1, 1)  # [NOIkk]
 

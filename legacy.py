@@ -10,12 +10,17 @@ import click
 import pickle
 import re
 import copy
+import cloudpickle
 import numpy as np
 import torch
 import dnnlib
 from torch_utils import misc
 
 # ----------------------------------------------------------------------------
+
+
+def load_pkl(f):
+    return cloudpickle.load(f)
 
 
 def load_network_pkl(f, force_fp16=False):

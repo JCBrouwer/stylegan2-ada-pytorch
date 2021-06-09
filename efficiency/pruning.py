@@ -30,7 +30,7 @@ class L1Weight(Pruning):
     L1-out penalty as described in 'Content-Aware GAN Compression': https://arxiv.org/abs/2104.02244
     """
 
-    def __init__(self, parent, lambda_l1=0.005, dims=(0, 1)):
+    def __init__(self, parent, lambda_l1=0.005, dims=0):
         self.parent = parent
         self.lambda_l1 = lambda_l1
         self.dims = dims
@@ -38,7 +38,7 @@ class L1Weight(Pruning):
 
         print("\nPruning layers:")
         for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
-            if "fc" in name or "affine" in name or "conv" in name:
+            if "fc" in name or "affine" in name:
                 try:  # TODO think of better solution for this :/
                     self.weights.append(mod.unquant_weight)
                 except:
@@ -63,21 +63,21 @@ class L1Mask(Pruning):
     Based on 'Learning Efficient Convolutional Networks through Network Slimming': https://arxiv.org/abs/1708.06519
     """
 
-    def __init__(self, parent, lambda_l1=0.005, conv_only=False):
+    def __init__(self, parent, lambda_l1=0.005):
         self.parent = parent
         self.lambda_l1 = lambda_l1
 
+        print("\nPruning layers:")
         self.masks = []
         for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
             if "fc" in name or "affine" in name:
-                if not conv_only:
-                    mod.register_forward_hook(self.forward_hook)
-                    mod.mask = torch.nn.Parameter(torch.ones((1, mod.weight.shape[0]), device=self.parent.device))
-                    self.masks.append(mod.mask)
-            elif "conv" in name:
                 mod.register_forward_hook(self.forward_hook)
-                mod.mask = torch.nn.Parameter(torch.ones((1, mod.weight.shape[0], 1, 1), device=self.parent.device))
+                setattr(
+                    mod, "mask", torch.nn.Parameter(torch.ones((1, mod.weight.shape[0]), device=self.parent.device))
+                )
                 self.masks.append(mod.mask)
+                print(name, "weight:", list(mod.weight.shape), "mask:", list(mod.mask.shape))
+        print()
 
     def forward_hook(self, mod, inputs, outputs):
         return mod.mask.to(outputs.dtype) * outputs
@@ -90,7 +90,7 @@ class L1Mask(Pruning):
 
         sparsities = [(p <= CLOSE_TO_ZERO).sum().detach().cpu() / p.numel() for p in self.masks]
         print("sparsity", np.mean(sparsities), "\t l1", l1_penalty.item())
-        training_stats.report("Pruning/l1", l1_penalty)
+        training_stats.report("Pruning/l1", l1_penalty * self.lambda_l1)
         training_stats.report("Pruning/sparsity", sparsities)
 
 

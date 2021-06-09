@@ -94,7 +94,7 @@ def _init():
 # ----------------------------------------------------------------------------
 
 
-def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, impl="ref"):
+def bias_act(x, b=None, dim=1, act="linear", alpha=None, gain=None, clamp=None, impl="cuda"):
     r"""Fused bias and activation function.
 
     Adds bias `b` to activation tensor `x`, evaluates activation function `act`,

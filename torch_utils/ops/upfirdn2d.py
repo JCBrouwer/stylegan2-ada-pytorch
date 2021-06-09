@@ -129,7 +129,7 @@ def setup_filter(f, device=torch.device("cpu"), normalize=True, flip_filter=Fals
 # ----------------------------------------------------------------------------
 
 
-def upfirdn2d(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1, impl="ref"):
+def upfirdn2d(x, f, up=1, down=1, padding=0, flip_filter=False, gain=1, impl="cuda"):
     r"""Pad, upsample, filter, and downsample a batch of 2D images.
 
     Performs the following sequence of operations for each channel:
@@ -291,7 +291,7 @@ def _upfirdn2d_cuda(up=1, down=1, padding=0, flip_filter=False, gain=1):
 # ----------------------------------------------------------------------------
 
 
-def filter2d(x, f, padding=0, flip_filter=False, gain=1, impl="ref"):
+def filter2d(x, f, padding=0, flip_filter=False, gain=1, impl="cuda"):
     r"""Filter a batch of 2D images using the given 2D FIR filter.
 
     By default, the result is padded so that its shape matches the input.
@@ -317,19 +317,14 @@ def filter2d(x, f, padding=0, flip_filter=False, gain=1, impl="ref"):
     """
     padx0, padx1, pady0, pady1 = _parse_padding(padding)
     fw, fh = _get_filter_size(f)
-    p = [
-        padx0 + fw // 2,
-        padx1 + (fw - 1) // 2,
-        pady0 + fh // 2,
-        pady1 + (fh - 1) // 2,
-    ]
+    p = [padx0 + fw // 2, padx1 + (fw - 1) // 2, pady0 + fh // 2, pady1 + (fh - 1) // 2]
     return upfirdn2d(x, f, padding=p, flip_filter=flip_filter, gain=gain, impl=impl)
 
 
 # ----------------------------------------------------------------------------
 
 
-def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1, impl="ref"):
+def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1, impl="cuda"):
     r"""Upsample a batch of 2D images using the given 2D FIR filter.
 
     By default, the result is padded so that its shape is a multiple of the input.
@@ -358,19 +353,14 @@ def upsample2d(x, f, up=2, padding=0, flip_filter=False, gain=1, impl="ref"):
     upx, upy = _parse_scaling(up)
     padx0, padx1, pady0, pady1 = _parse_padding(padding)
     fw, fh = _get_filter_size(f)
-    p = [
-        padx0 + (fw + upx - 1) // 2,
-        padx1 + (fw - upx) // 2,
-        pady0 + (fh + upy - 1) // 2,
-        pady1 + (fh - upy) // 2,
-    ]
+    p = [padx0 + (fw + upx - 1) // 2, padx1 + (fw - upx) // 2, pady0 + (fh + upy - 1) // 2, pady1 + (fh - upy) // 2]
     return upfirdn2d(x, f, up=up, padding=p, flip_filter=flip_filter, gain=gain * upx * upy, impl=impl)
 
 
 # ----------------------------------------------------------------------------
 
 
-def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1, impl="ref"):
+def downsample2d(x, f, down=2, padding=0, flip_filter=False, gain=1, impl="cuda"):
     r"""Downsample a batch of 2D images using the given 2D FIR filter.
 
     By default, the result is padded so that its shape is a fraction of the input.
