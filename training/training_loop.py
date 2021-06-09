@@ -5,25 +5,21 @@
 # and any modifications thereto.  Any use, reproduction, disclosure or
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
-
 import copy
-
-from torch.autograd.grad_mode import no_grad
-from efficiency.slimming import SlimmingLoss
 import json
 import os
-import cloudpickle as pickle  # pruning relies on local functions which regular pickle can't deal with
-import time
+from glob import glob
+from time import time
 
+import cloudpickle as pickle  # pruning relies on local functions which regular pickle can't deal with
+import dnnlib
+import legacy
 import numpy as np
 import PIL.Image
 import psutil
 import torch
 import wandb
-
-import dnnlib
-import legacy
-from metrics import metric_main
+from efficiency.evaluation import compute_metrics
 from torch_utils import misc, training_stats
 from torch_utils.ops import conv2d_gradfix, grid_sample_gradfix
 
@@ -131,7 +127,7 @@ def training_loop(
     compressing = loss_kwargs["class_name"] == "efficiency.slimming.SlimmingLoss"
 
     # Initialize.
-    start_time = time.time()
+    start_time = time()
     device = torch.device("cuda", rank)
     np.random.seed(random_seed * num_gpus + rank)
     torch.manual_seed(random_seed * num_gpus + rank)
@@ -271,6 +267,9 @@ def training_loop(
             phase.start_event = torch.cuda.Event(enable_timing=True)
             phase.end_event = torch.cuda.Event(enable_timing=True)
 
+    if compressing:
+        phases = [phase for phase in phases if "G" in phase.name]
+
     # Export sample images.
     grid_size = None
     grid_z = None
@@ -311,7 +310,7 @@ def training_loop(
     cur_tick = 0
     last_nbatch = 0
     tick_start_nimg = cur_nimg
-    tick_start_time = time.time()
+    tick_start_time = time()
     maintenance_time = tick_start_time - start_time
     batch_idx = 0
     if progress_fn is not None:
@@ -395,7 +394,7 @@ def training_loop(
             continue
 
         # Print status line, accumulating the same information in stats_collector.
-        tick_end_time = time.time()
+        tick_end_time = time()
         fields = []
         fields += [f"tick {training_stats.report0('Progress/tick', cur_tick):<5d}"]
         fields += [f"kimg {training_stats.report0('Progress/kimg', cur_nimg / 1e3):<8.1f}"]
@@ -466,29 +465,34 @@ def training_loop(
 
         # Evaluate metrics.
         if (snapshot_data is not None) and (len(metrics) > 0):
+            # for metric in metrics:
+            #     result_dict = metric_main.calc_metric(
+            #         metric=metric,
+            #         G=snapshot_data["G"],
+            #         dataset_kwargs=training_set_kwargs,
+            #         num_gpus=num_gpus,
+            #         rank=rank,
+            #         device=device,
+            #     )
+            #     if rank == 0:
+            #         metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
+            #     stats_metrics.update(result_dict.results)
             if rank == 0:
-                print("Evaluating metrics...")
-            for metric in metrics:
-                result_dict = metric_main.calc_metric(
-                    metric=metric,
-                    G=snapshot_data["G"],
-                    dataset_kwargs=training_set_kwargs,
-                    num_gpus=num_gpus,
-                    rank=rank,
-                    device=device,
-                )
-                if rank == 0:
-                    metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
-                stats_metrics.update(result_dict.results)
-            if rank == 0:
+                print("Calculating metrics...")
+                t = time()
+                stats_metrics.update(compute_metrics(snapshot_pkl, datapath=training_set_kwargs["path"], n=5000))
                 wandb.log(
                     {
                         "Evaluation/KID": stats_metrics["kid"],
+                        "Evaluation/FID": stats_metrics["fid"],
                         "Evaluation/Precision": stats_metrics["precision"],
                         "Evaluation/Recall": stats_metrics["recall"],
+                        "Evaluation/Density": stats_metrics["density"],
+                        "Evaluation/Coverage": stats_metrics["coverage"],
                     },
                     step=cur_nimg,
                 )
+                print("Took:", time() - t, "seconds")
         del snapshot_data  # conserve memory
 
         # Collect statistics.
@@ -530,7 +534,7 @@ def training_loop(
             last_nbatch = this_nbatch
 
         # Update logs.
-        timestamp = time.time()
+        timestamp = time()
         if stats_jsonl is not None:
             fields = dict(stats_dict, timestamp=timestamp)
             stats_jsonl.write(json.dumps(fields) + "\n")
@@ -549,7 +553,7 @@ def training_loop(
         # Update state.
         cur_tick += 1
         tick_start_nimg = cur_nimg
-        tick_start_time = time.time()
+        tick_start_time = time()
         maintenance_time = tick_start_time - tick_end_time
         if done:
             break
@@ -557,7 +561,13 @@ def training_loop(
     # Done.
     if rank == 0:
         print()
-        print("Exiting...")
+        print("Final metrics...")
+        most_recent_pkl = list(sorted(glob(run_dir + "/*.pkl")))[-1]
+        log_dict = {}
+        for name, value in compute_metrics(most_recent_pkl, datapath=training_set_kwargs["path"]).items():
+            log_dict[f"Post Evaluation/{name.upper() if 'id' in name else name.capitalize()}"] = value
+            print(name.upper() if "id" in name else name.capitalize(), ":", value)
+        wandb.log(log_dict)
 
 
 # ----------------------------------------------------------------------------

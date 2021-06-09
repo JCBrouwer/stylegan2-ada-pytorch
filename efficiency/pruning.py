@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from torch_utils.misc import copy_params_and_buffers
 
 import numpy as np
 import torch
@@ -13,16 +14,42 @@ class Pruning:
         pass
 
     @abstractmethod
-    def before_minibatch(self):
+    def loss_backward(self):
         pass
 
-    @abstractmethod
-    def after_minibatch(self):
-        pass
 
-    @abstractmethod
-    def before_backward(self):
-        pass
+class L1Mask(Pruning):
+    """
+    Based on 'Learning Efficient Convolutional Networks through Network Slimming': https://arxiv.org/abs/1708.06519
+    """
+
+    def __init__(self, parent, lambda_l1=0.005, prune_torgb=True):
+        self.parent = parent
+        self.lambda_l1 = lambda_l1
+
+        print("\nPruning layers:")
+        self.masks = []
+        for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
+            if ("fc" in name or "affine" in name) and (prune_torgb or "rgb" not in name):
+                mod.register_forward_hook(self.forward_hook)
+                setattr(
+                    mod, "mask", torch.nn.Parameter(torch.ones((1, mod.weight.shape[0]), device=self.parent.device))
+                )
+                self.masks.append(mod.mask)
+                print(name, "weight:", list(mod.weight.shape), "mask:", list(mod.mask.shape))
+        print()
+
+    def forward_hook(self, mod, inputs, outputs):
+        return mod.mask.to(outputs.dtype) * outputs
+
+    def loss_backward(self):
+        l1_penalty = sum(torch.norm(mask, p=1) for mask in self.masks)
+        l1_penalty.mul(self.lambda_l1).backward()
+
+        sparsities = [(p <= CLOSE_TO_ZERO).sum().detach().cpu() / p.numel() for p in self.masks]
+        print("sparsity", np.mean(sparsities), "\t l1", l1_penalty.item())
+        training_stats.report("Pruning/l1", l1_penalty * self.lambda_l1)
+        training_stats.report("Pruning/sparsity", sparsities)
 
 
 class L1Weight(Pruning):
@@ -46,7 +73,7 @@ class L1Weight(Pruning):
                 print(name, mod.weight.shape)
         print()
 
-    def after_minibatch(self):
+    def loss_backward(self):
         l1_penalty = 0
         for weight in self.weights:
             l1_penalty += torch.norm(weight, p=1, dim=self.dims).sum()
@@ -55,42 +82,6 @@ class L1Weight(Pruning):
         sparsities = [(abs(p) <= CLOSE_TO_ZERO).sum().detach().cpu() / p.numel() for p in self.weights]
         # print("sparsity", np.mean(sparsities), "\t l1", l1_penalty.item())
         training_stats.report("Pruning/l1", self.lambda_l1 * l1_penalty)
-        training_stats.report("Pruning/sparsity", sparsities)
-
-
-class L1Mask(Pruning):
-    """
-    Based on 'Learning Efficient Convolutional Networks through Network Slimming': https://arxiv.org/abs/1708.06519
-    """
-
-    def __init__(self, parent, lambda_l1=0.005):
-        self.parent = parent
-        self.lambda_l1 = lambda_l1
-
-        print("\nPruning layers:")
-        self.masks = []
-        for name, mod in list(self.parent.G_mapping.named_modules()) + list(self.parent.G_synthesis.named_modules()):
-            if "fc" in name or "affine" in name:
-                mod.register_forward_hook(self.forward_hook)
-                setattr(
-                    mod, "mask", torch.nn.Parameter(torch.ones((1, mod.weight.shape[0]), device=self.parent.device))
-                )
-                self.masks.append(mod.mask)
-                print(name, "weight:", list(mod.weight.shape), "mask:", list(mod.mask.shape))
-        print()
-
-    def forward_hook(self, mod, inputs, outputs):
-        return mod.mask.to(outputs.dtype) * outputs
-
-    def after_minibatch(self):
-        l1_penalty = 0
-        for mask in self.masks:
-            l1_penalty += torch.norm(mask, p=1)
-        l1_penalty.mul(self.lambda_l1).backward()
-
-        sparsities = [(p <= CLOSE_TO_ZERO).sum().detach().cpu() / p.numel() for p in self.masks]
-        print("sparsity", np.mean(sparsities), "\t l1", l1_penalty.item())
-        training_stats.report("Pruning/l1", l1_penalty * self.lambda_l1)
         training_stats.report("Pruning/sparsity", sparsities)
 
 
@@ -136,7 +127,7 @@ class Proximal(Pruning):
     def before_minibatch(self):
         self.mask_optimizer.zero_grad()
 
-    def after_minibatch(self):
+    def loss_backward(self):
         self.mask_optimizer.step()
 
         lr = self.mask_schedule.get_last_lr()[0]

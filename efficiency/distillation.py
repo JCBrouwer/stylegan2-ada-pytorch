@@ -31,7 +31,7 @@ class Distillation:
 
 
 class Basic(Distillation):
-    def __init__(self, parent, path, batch_size):
+    def __init__(self, parent, path, batch_size, lambda_pixel=10):
         assert path != "", "Must specify --teacher-path when distilling!"
         self.parent = parent
         self.z_dim = parent.G_mapping.z_dim
@@ -39,6 +39,7 @@ class Basic(Distillation):
         dataset = DistillationDataset(path)
         sampler = misc.InfiniteSampler(dataset)
         self.iterloader = iter(torch.utils.data.DataLoader(dataset=dataset, sampler=sampler, batch_size=batch_size))
+        self.lambda_pixel = lambda_pixel
 
     def __getstate__(self):
         return {k: v for k, v in self.__dict__.items() if not k == "iterloader"}  # dataloader iterator can't be pickled
@@ -50,14 +51,14 @@ class Basic(Distillation):
         return latents.float()
 
     def loss_backward(self, student_imgs, retain_graph=False):
-        loss = torch.nn.functional.l1_loss(self.teacher_imgs, student_imgs)
+        loss = self.lambda_pixel * torch.nn.functional.l1_loss(self.teacher_imgs, student_imgs)
         training_stats.report("Distillation/loss", loss)
         loss.backward(retain_graph=retain_graph)
 
 
 class LPIPS(Basic):
-    def __init__(self, parent, path, batch_size, lpips_net="alex"):
-        super().__init__(parent, path, batch_size)
+    def __init__(self, parent, path, batch_size, lambda_pixel=10, lpips_net="alex"):
+        super().__init__(parent, path, batch_size, lambda_pixel)
         self.perceptual_loss = lpips.LPIPS(net=lpips_net).to(self.device)
 
     def loss_backward(self, student_imgs, retain_graph=False):

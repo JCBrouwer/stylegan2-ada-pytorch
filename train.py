@@ -88,6 +88,8 @@ def setup_training_loop_kwargs(
     nbits=None,
     input_max=None,
     quantize_mapping=None,
+    prune_torgb=None,
+    lambda_pixel=None,
     **kwargs,
 ):
     print("Unrecognized arguments:", kwargs)
@@ -115,10 +117,10 @@ def setup_training_loop_kwargs(
     if metrics is None:
         metrics = ["fid50k_full"]
     assert isinstance(metrics, list)
-    if not all(metric_main.is_valid_metric(metric) for metric in metrics):
-        raise UserError(
-            "\n".join(["--metrics can only contain the following values:"] + metric_main.list_valid_metrics())
-        )
+    # if not all(metric_main.is_valid_metric(metric) for metric in metrics):
+    #     raise UserError(
+    #         "\n".join(["--metrics can only contain the following values:"] + metric_main.list_valid_metrics())
+    #     )
     args.metrics = metrics
 
     if seed is None:
@@ -267,6 +269,8 @@ def setup_training_loop_kwargs(
         nbits=nbits,
         input_max=input_max,
         quantize_mapping=quantize_mapping,
+        prune_torgb=prune_torgb,
+        lambda_pixel=lambda_pixel,
     )
 
     if cfg == "cifar" or "wav" in cfg:
@@ -595,6 +599,7 @@ class CommaSeparatedList(click.ParamType):
     type=click.Choice(["prox", "l1-in-out", "l1-out", "l1-in", "mask", "none"]),
 )
 @click.option("--lambda_l1", help="Strength of L1 penalty", type=float, default=0.001)
+@click.option("--prune-torgb", help="Whether to prune the ToRGB layers", type=bool, default=True)
 
 # Distillation options.
 @click.option(
@@ -603,7 +608,10 @@ class CommaSeparatedList(click.ParamType):
 @click.option(
     "--teacher-path", help="Path to folder or zip with samples from fully-trained teacher Generator", metavar="PATH"
 )
-@click.option("--lpips-net", help="Network to use for LPIPS perceptual loss", type=click.Choice(["alex", "vgg"]))
+@click.option(
+    "--lpips-net", help="Network to use for LPIPS perceptual loss", type=click.Choice(["alex", "vgg"]), default="vgg"
+)
+@click.option("--lambda-pixel", help="Strength of pixel loss", type=float, default=10)
 
 # Quantization options.
 @click.option(

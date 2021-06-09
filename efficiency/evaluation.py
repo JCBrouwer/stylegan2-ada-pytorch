@@ -11,7 +11,6 @@ import torch
 from metrics import metric_utils
 from prdc import compute_prdc
 
-torch.set_grad_enabled(False)
 device = torch.device("cuda", 0)
 torch.backends.cudnn.benchmark = True
 
@@ -37,7 +36,8 @@ def compute_kid(real_features, fake_features, num_subsets=100, max_subset_size=1
     return kid
 
 
-def compute_metrics(network_pkl, datapath):
+@torch.no_grad()
+def compute_metrics(network_pkl, datapath, n=50000):
     if os.path.exists(network_pkl.replace("pkl", "json")):
         with open(network_pkl.replace("pkl", "json"), "r") as fp:
             metrics = json.load(fp)
@@ -70,7 +70,7 @@ def compute_metrics(network_pkl, datapath):
         rel_hi=0,
         capture_all=True,
         capture_mean_cov=True,
-        max_items=50000,
+        max_items=n,
         data_loader_kwargs=dict(pin_memory=True, num_workers=1, prefetch_factor=2),
     )
     fake_feature_stats = metric_utils.compute_feature_stats_for_generator(
@@ -82,7 +82,7 @@ def compute_metrics(network_pkl, datapath):
         capture_all=True,
         capture_mean_cov=True,
         jit=True,
-        max_items=50000,
+        max_items=n,
     )
 
     real_features = real_feature_stats.get_all()

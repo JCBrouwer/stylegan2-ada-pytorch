@@ -27,6 +27,8 @@ class SlimmingLoss(StyleGAN2Loss):
         nbits=8,
         input_max=4,
         quantize_mapping=True,
+        prune_torgb=True,
+        lambda_pixel=10,
         **kwargs
     ):
         super().__init__(device, G_mapping, G_synthesis, D, **kwargs)
@@ -51,7 +53,7 @@ class SlimmingLoss(StyleGAN2Loss):
         if pruning == "prox":
             self.pruner = Proximal(self)  # doesn't really work :(
         elif pruning == "mask":
-            self.pruner = L1Mask(self, lambda_l1)
+            self.pruner = L1Mask(self, lambda_l1, prune_torgb)
         elif "l1" in pruning:
             dims = ((0, 1) if "in" in pruning else 0) if "out" in pruning else 1  # in -> 1, out -> 0, in-out -> (0, 1)
             self.pruner = L1Weight(self, lambda_l1, dims=dims)
@@ -59,20 +61,20 @@ class SlimmingLoss(StyleGAN2Loss):
             self.pruner = Pruning()  # does nothing
 
         if distill == "basic":
-            self.distiller = Basic(self, teacher_path, batch_size)
+            self.distiller = Basic(self, teacher_path, batch_size, lambda_pixel=lambda_pixel)
         elif distill == "lpips":
-            self.distiller = LPIPS(self, teacher_path, batch_size, lpips_net=lpips_net)
+            self.distiller = LPIPS(self, teacher_path, batch_size, lambda_pixel=lambda_pixel, lpips_net=lpips_net)
         elif distill == "self-supervised":
-            self.distiller = SelfSupervised(self, teacher_path, batch_size)
+            self.distiller = SelfSupervised(
+                self, teacher_path, batch_size, lambda_pixel=lambda_pixel, lpips_net=lpips_net
+            )
         else:
             self.distiller = Distillation()  # does nothing
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
-        assert phase in ["Gmain", "Greg", "Gboth", "Dmain", "Dreg", "Dboth"]
+        assert phase in ["Gmain", "Greg", "Gboth"]
         do_Gmain = phase in ["Gmain", "Gboth"]
-        do_Dmain = phase in ["Dmain", "Dboth"]
         do_Gpl = (phase in ["Greg", "Gboth"]) and (self.pl_weight != 0)
-        do_Dr1 = (phase in ["Dreg", "Dboth"]) and (self.r1_gamma != 0)
 
         #
         # Generator losses
@@ -80,22 +82,9 @@ class SlimmingLoss(StyleGAN2Loss):
 
         if do_Gmain:
             gen_z = self.distiller.get_latents().to(self.device)
-            self.pruner.before_minibatch()
             gen_img, _ = self.run_G(gen_z, None, sync=False)
-            self.pruner.after_minibatch()
+            self.pruner.loss_backward()
             self.distiller.loss_backward(gen_img)
-
-            # gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl))  # May get synced by Gpl.
-            # gen_logits = self.run_D(gen_img, gen_c, sync=False)
-            # training_stats.report("Loss/scores/fake", gen_logits)
-            # training_stats.report("Loss/signs/fake", gen_logits.sign())
-            # loss_Gmain = torch.nn.functional.softplus(-gen_logits)  # -log(sigmoid(gen_logits))
-            # training_stats.report("Loss/G/loss", loss_Gmain)
-            # loss = loss_Gmain.mean().mul(gain)
-            # self.pruner.before_backward()
-            # loss.backward()
-
-        return  # only use pruning and distillation for now
 
         # Path length regularization
         if do_Gpl:
@@ -114,39 +103,3 @@ class SlimmingLoss(StyleGAN2Loss):
             loss_Gpl = pl_penalty * self.pl_weight
             training_stats.report("Loss/G/reg", loss_Gpl)
             (gen_img[:, 0, 0, 0] * 0 + loss_Gpl).mean().mul(gain).backward()
-
-        #
-        # Discriminator losses
-        #
-
-        loss_Dgen = 0
-        if do_Dmain:
-            gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=False)
-            gen_logits = self.run_D(gen_img, gen_c, sync=False)  # Gets synced by loss_Dreal.
-            training_stats.report("Loss/scores/fake", gen_logits)
-            training_stats.report("Loss/signs/fake", gen_logits.sign())
-            loss_Dgen = torch.nn.functional.softplus(gen_logits)  # -log(1 - sigmoid(gen_logits))
-            loss_Dgen.mean().mul(gain).backward()
-
-        if do_Dmain or do_Dr1:
-            real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
-            real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
-            training_stats.report("Loss/scores/real", real_logits)
-            training_stats.report("Loss/signs/real", real_logits.sign())
-
-            loss_Dreal = 0
-            if do_Dmain:
-                loss_Dreal = torch.nn.functional.softplus(-real_logits)  # -log(sigmoid(real_logits))
-                training_stats.report("Loss/D/loss", loss_Dgen + loss_Dreal)
-
-            loss_Dr1 = 0
-            if do_Dr1:
-                with conv2d_gradfix.no_weight_gradients():
-                    r1_grads = torch.autograd.grad(
-                        outputs=[real_logits.sum()], inputs=[real_img_tmp], create_graph=True, only_inputs=True
-                    )[0]
-                r1_penalty = r1_grads.square().sum([1, 2, 3])
-                loss_Dr1 = r1_penalty * (self.r1_gamma / 2)
-                training_stats.report("Loss/r1_penalty", r1_penalty)
-                training_stats.report("Loss/D/reg", loss_Dr1)
-            (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()
